@@ -54,13 +54,14 @@ func NewProcess(name string, cfg config.ProcessConfig, workDir string) *Process 
 
 // NewAdoptedProcess wraps an existing running process that survived a daemon restart.
 // Because we didn't start it, we have no *exec.Cmd — we watch it by polling.
-func NewAdoptedProcess(name string, cfg config.ProcessConfig, pid, pgid int, startedAt time.Time) *Process {
+func NewAdoptedProcess(name string, cfg config.ProcessConfig, workDir string, pid, pgid int, startedAt time.Time) *Process {
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
 	p := &Process{
 		name:      name,
 		cfg:       cfg,
+		workDir:   workDir,
 		status:    StatusRunning,
 		pid:       pid,
 		pgid:      pgid,
@@ -271,4 +272,11 @@ func (p *Process) IncrRestarts() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.restarts++
+}
+
+// WorkDir returns the working directory this process runs in.
+func (p *Process) WorkDir() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.workDir
 }

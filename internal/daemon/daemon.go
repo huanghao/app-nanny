@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -82,6 +83,10 @@ func Run(socketPath, dataDir string) error {
 	// Start web console HTTP server on :7070
 	webMux := web.NewMux(mgr)
 	web.RegisterSSERoute(webMux, mgr)
+	webMux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"version":%q,"commit":%q}`, daemonVersion, daemonCommit)
+	})
 	webSrv := web.NewServer(":7070", webMux)
 	go func() {
 		if err := webSrv.Start(); err != nil {

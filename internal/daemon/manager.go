@@ -78,15 +78,20 @@ func (m *Manager) AdoptProcess(key string, entry RuntimeEntry) {
 	m.mu.Unlock()
 
 	var procCfg config.ProcessConfig
+	projDir, _ := m.registry.Get(projectName)
+	workDir := projDir
 	if cfg != nil && len(parts) == 2 {
 		if pc, ok := cfg.Processes[parts[1]]; ok {
 			procCfg = pc
+			if pc.WorkingDir != "" {
+				workDir = filepath.Join(projDir, pc.WorkingDir)
+			}
 		}
 	} else if cfg != nil {
 		procCfg = config.ProcessConfig{Command: cfg.Command}
 	}
 
-	proc := NewAdoptedProcess(key, procCfg, entry.PID, entry.PGID, entry.StartedAt)
+	proc := NewAdoptedProcess(key, procCfg, workDir, entry.PID, entry.PGID, entry.StartedAt)
 	if cfg != nil {
 		proc.SetOnCrash(func(k string) { m.onCrash(k, cfg) })
 	}
@@ -468,26 +473,32 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			DeclaredPort: m.declaredPortForKey(key),
 			ActualPorts:  ActualPorts(proc.PID(), proc.PGID()),
 			MemMB:        snap.MemMB,
+			WorkDir:      proc.WorkDir(),
 		})
 	}
 
 	// 2. Registered projects not yet started — show as stopped so they're visible
-	for name := range m.registry.List() {
+	for name, projDir := range m.registry.List() {
 		if seen[name] {
 			continue
 		}
 		cfg := m.configs[name]
 		if cfg == nil {
-			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped"})
+			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped", WorkDir: projDir})
 			continue
 		}
 		if cfg.IsModeB() {
 			for pName, pCfg := range cfg.Processes {
+				wd := projDir
+				if pCfg.WorkingDir != "" {
+					wd = filepath.Join(projDir, pCfg.WorkingDir)
+				}
 				out = append(out, ipc.ProcessInfo{
 					Project:      name,
 					Process:      pName,
 					Status:       "stopped",
 					DeclaredPort: pCfg.Port,
+					WorkDir:      wd,
 				})
 			}
 		} else {
@@ -500,6 +511,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 				Project:      name,
 				Status:       "stopped",
 				DeclaredPort: firstPort,
+				WorkDir:      projDir,
 			})
 		}
 	}

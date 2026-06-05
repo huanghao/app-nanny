@@ -62,6 +62,7 @@ type ProcessInfo struct {
 	DeclaredPort int     `json:"declared_port"`
 	ActualPorts  []int   `json:"actual_ports"`
 	MemMB        float64 `json:"mem_mb"`
+	WorkDir      string  `json:"work_dir"`
 }
 
 type PSResult struct {

@@ -9,10 +9,13 @@
     header { background: #252526; padding: 12px 20px; border-bottom: 1px solid #3c3c3c; display: flex; align-items: center; gap: 12px; }
     header h1 { margin: 0; font-size: 16px; color: #9cdcfe; }
     #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; display: inline-block; }
+    #daemon-version { color: #585858; font-size: 11px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th { text-align: left; padding: 8px 12px; background: #252526; color: #858585; font-weight: normal; border-bottom: 1px solid #3c3c3c; }
     td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: middle; }
-    tr:hover td { background: #2a2a2a; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover td { background: #2a2a2a; }
+    tbody tr.active-log td { background: #1f2d2d; }
     .running { color: #4ec9b0; }
     .stopped { color: #585858; }
     .crashed { color: #f48771; }
@@ -21,12 +24,14 @@
     a.port-link { color: #4ec9b0; text-decoration: none; }
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
     .port-dim { color: #484848; }
+    .cwd { color: #444; font-size: 10px; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-    /* Log panel — height controlled by JS */
+    /* Log panel */
     #log-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
     #log-resize { height: 6px; cursor: row-resize; background: #2d2d2d; flex-shrink: 0; position: relative; }
     #log-resize::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 32px; height: 2px; border-radius: 1px; background: #555; }
-    #log-resize:hover, #log-resize:hover::after { background: #4ec9b0; }
+    #log-resize:hover, #log-resize.dragging { background: #1e3a3a; }
+    #log-resize:hover::after, #log-resize.dragging::after { background: #4ec9b0; }
     #log-header { background: #252526; padding: 6px 12px; font-size: 12px; color: #858585; display: flex; justify-content: space-between; flex-shrink: 0; }
     #log-body { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; line-height: 1.6; min-height: 0; }
     #log-body .err { color: #f48771; }
@@ -37,13 +42,14 @@
 <header>
   <span id="status-dot"></span>
   <h1>nanny</h1>
+  <span id="daemon-version"></span>
   <span id="daemon-status" style="color:#858585;font-size:12px">loading...</span>
 </header>
 <div class="main" id="main">
   <table>
     <thead><tr>
-      <th>PROJECT</th><th>PROCESS</th><th>STATUS</th><th>PID</th>
-      <th>UPTIME</th><th>MEM</th><th>PORTS</th><th>ACTIONS</th>
+      <th>PROJECT</th><th>PROCESS</th><th>PORTS</th><th>STATUS</th>
+      <th>PID</th><th>UPTIME</th><th>MEM</th><th>ACTIONS</th>
     </tr></thead>
     <tbody id="proc-body"></tbody>
   </table>
@@ -51,77 +57,88 @@
 <div id="log-panel">
   <div id="log-resize"></div>
   <div id="log-header">
-    <span id="log-title">logs — select a service</span>
+    <span id="log-title">logs — click a service row</span>
     <span><button class="btn" onclick="clearLog()">clear</button></span>
   </div>
   <div id="log-body"></div>
 </div>
 <script>
 let eventSource = null;
+let activeKey  = null;
 
 // ── Log panel resize ─────────────────────────────────────────────────────────
-const LS_KEY = 'nanny-log-height';
-const DEFAULT_HEIGHT = 380;
-const MIN_HEIGHT = 80;
-const MAX_HEIGHT = () => Math.floor(window.innerHeight * 0.85);
+const LS_HEIGHT = 'nanny-log-height';
+const DEFAULT_H = 380;
+const MIN_H = 80;
+const MAX_H = () => Math.floor(window.innerHeight * 0.85);
 
-function applyLogHeight(h) {
-  h = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT(), h));
+function applyH(h) {
+  h = Math.max(MIN_H, Math.min(MAX_H(), h));
   document.getElementById('log-panel').style.height = h + 'px';
   document.getElementById('main').style.paddingBottom = (h + 8) + 'px';
   return h;
 }
 
-function initLogHeight() {
-  const saved = parseInt(localStorage.getItem(LS_KEY), 10);
-  applyLogHeight(saved > 0 ? saved : DEFAULT_HEIGHT);
-}
-
 (function setupResize() {
+  const saved = parseInt(localStorage.getItem(LS_HEIGHT), 10);
+  applyH(saved > 0 ? saved : DEFAULT_H);
+
   const handle = document.getElementById('log-resize');
-  let dragging = false, startY = 0, startH = 0;
+  let drag = false, startY = 0, startH = 0;
 
   handle.addEventListener('mousedown', e => {
-    dragging = true;
-    startY = e.clientY;
+    drag = true; startY = e.clientY;
     startH = document.getElementById('log-panel').offsetHeight;
+    handle.classList.add('dragging');
     document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
     e.preventDefault();
   });
-
   document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    // Drag handle is at the top of the panel — dragging up increases height
-    const newH = applyLogHeight(startH + (startY - e.clientY));
-    document.getElementById('log-panel').style.height = newH + 'px';
-    document.getElementById('main').style.paddingBottom = (newH + 8) + 'px';
+    if (!drag) return;
+    applyH(startH + (startY - e.clientY));
   });
-
   document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
+    if (!drag) return;
+    drag = false;
+    handle.classList.remove('dragging');
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
-    const h = document.getElementById('log-panel').offsetHeight;
-    localStorage.setItem(LS_KEY, h);
+    localStorage.setItem(LS_HEIGHT, document.getElementById('log-panel').offsetHeight);
   });
 })();
 
-initLogHeight();
+// ── Daemon version ───────────────────────────────────────────────────────────
+async function loadVersion() {
+  try {
+    const r = await fetch('/api/version');
+    const d = await r.json();
+    document.getElementById('daemon-version').textContent = 'v' + d.version;
+  } catch(e) {}
+}
+loadVersion();
 
-// ── Ports cell ───────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function shortenPath(p) {
+  // Replace home directory prefix with ~
+  const home = location.hostname === 'localhost' ? null : null; // can't know home in browser
+  // Just show last 3 path segments
+  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean);
+  if (parts.length <= 3) return p;
+  return '…/' + parts.slice(-3).join('/');
+}
+
 function portsHTML(p) {
   const actual = p.actual_ports || [];
   const declared = p.declared_port || 0;
   if (actual.length > 0) {
     return actual.map(port =>
-      `<a class="port-link" href="http://localhost:${port}" target="_blank">${port}</a>`
+      `<a class="port-link" href="http://localhost:${port}" target="_blank" onclick="event.stopPropagation()">${port}</a>`
     ).join('&nbsp;');
   }
   if (declared > 0) {
     if (p.status === 'running') {
-      return `<a class="port-link" href="http://localhost:${declared}" target="_blank">${declared}</a>`
+      return `<a class="port-link" href="http://localhost:${declared}" target="_blank" onclick="event.stopPropagation()">${declared}</a>`
            + `&nbsp;<span class="port-dim">(starting)</span>`;
     }
     return `<span class="port-dim">${declared}</span>`;
@@ -130,10 +147,10 @@ function portsHTML(p) {
 }
 
 function actionsHTML(key) {
-  return `<button class="btn" onclick="doAction('${key}','start')" title="start">&#9654;</button>`
-       + `<button class="btn" onclick="doAction('${key}','stop')" title="stop">&#9632;</button>`
-       + `<button class="btn" onclick="doAction('${key}','restart')" title="restart">&#8634;</button>`
-       + `<button class="btn" onclick="streamLogs('${key}')" title="logs">logs</button>`;
+  const s = `onclick="event.stopPropagation()"`;
+  return `<button class="btn" ${s} onclick="doAction('${key}','start');event.stopPropagation()" title="start">&#9654;</button>`
+       + `<button class="btn" ${s} onclick="doAction('${key}','stop');event.stopPropagation()" title="stop">&#9632;</button>`
+       + `<button class="btn" ${s} onclick="doAction('${key}','restart');event.stopPropagation()" title="restart">&#8634;</button>`;
 }
 
 function setText(td, text) { if (td.textContent !== String(text)) td.textContent = text; }
@@ -160,25 +177,37 @@ async function loadPS() {
     processes.forEach((p, i) => {
       const key = p.process ? `${p.project}/${p.process}` : p.project;
       const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
+      const cwd = p.work_dir ? shortenPath(p.work_dir) : '';
 
       let tr = rowMap.get(key);
       if (!tr) {
         tr = document.createElement('tr');
         tr.dataset.key = key;
+        // 8 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | ACTIONS
         for (let c = 0; c < 8; c++) tr.appendChild(document.createElement('td'));
         tr.querySelectorAll('td')[7].innerHTML = actionsHTML(key);
+        // Row click → show logs
+        tr.addEventListener('click', () => streamLogs(key));
       }
       rowMap.delete(key);
 
+      // Highlight active log row
+      if (key === activeKey) tr.classList.add('active-log');
+      else tr.classList.remove('active-log');
+
       const cells = tr.querySelectorAll('td');
-      setText(cells[0], p.project);
+      // PROJECT + cwd subtitle
+      const projHTML = `<div>${p.project}</div>`
+        + (cwd ? `<div class="cwd" title="${p.work_dir}">${cwd}</div>` : '');
+      setHTML(cells[0], projHTML);
       setText(cells[1], p.process || '—');
-      setClass(cells[2], p.status);
-      setText(cells[2], p.status);
-      setText(cells[3], p.pid || '—');
-      setText(cells[4], p.uptime || '—');
-      setText(cells[5], mem);
-      setHTML(cells[6], portsHTML(p));
+      setHTML(cells[2], portsHTML(p));       // PORTS (3rd)
+      setClass(cells[3], p.status);
+      setText(cells[3], p.status);           // STATUS (4th)
+      setText(cells[4], p.pid || '—');
+      setText(cells[5], p.uptime || '—');
+      setText(cells[6], mem);
+      // actions[7] set once at row creation
 
       const sibling = tbody.children[i];
       if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
@@ -205,9 +234,16 @@ async function doAction(key, act) {
 
 function streamLogs(key) {
   if (eventSource) eventSource.close();
+  activeKey = key;
   document.getElementById('log-title').textContent = 'logs — ' + key;
   const logBody = document.getElementById('log-body');
   logBody.innerHTML = '';
+
+  // Update row highlight immediately
+  for (const tr of document.querySelectorAll('tr[data-key]')) {
+    tr.classList.toggle('active-log', tr.dataset.key === key);
+  }
+
   const sseKey = key.replace('/', '-');
   eventSource = new EventSource('/api/logs/' + sseKey + '/stream');
   eventSource.onmessage = e => {
