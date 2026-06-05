@@ -155,6 +155,11 @@ func (m *Manager) Start(projectName, processName string) error {
 
 func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string) error {
 	m.mu.Lock()
+	// Idempotent: skip if already running
+	if existing, ok := m.processes[name]; ok && existing.Status() == StatusRunning {
+		m.mu.Unlock()
+		return nil
+	}
 	for envVar, port := range cfg.Ports {
 		if err := m.checkPortConflictLocked(name, envVar, port); err != nil {
 			m.mu.Unlock()
@@ -201,6 +206,11 @@ func (m *Manager) startModeB(projectName, processName string, cfg *config.Projec
 		key := projectName + "/" + pName
 
 		m.mu.Lock()
+		// Idempotent: skip processes already running
+		if existing, ok := m.processes[key]; ok && existing.Status() == StatusRunning {
+			m.mu.Unlock()
+			continue
+		}
 		err := m.checkPortConflictLocked(key, "PORT", pCfg.Port)
 		m.mu.Unlock()
 		if err != nil {
@@ -343,6 +353,8 @@ func (m *Manager) LoadAll() {
 }
 
 // checkPortConflictLocked must be called with m.mu held.
+// For Mode B processes (key = "project/process"), only that process's own port is checked.
+// For Mode A processes (key = "project"), all ports in [ports] are checked.
 func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) error {
 	if port == 0 {
 		return nil
@@ -351,13 +363,28 @@ func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) err
 		if key == claimant || proc.Status() != StatusRunning {
 			continue
 		}
-		cfg := m.projectConfigForKeyLocked(key)
-		if cfg == nil {
-			continue
-		}
-		for _, p := range cfg.DeclaredPorts() {
-			if p == port {
-				return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) == 2 {
+			// Mode B: running process only owns its own declared port
+			projectCfg := m.configs[parts[0]]
+			if projectCfg == nil {
+				continue
+			}
+			if procCfg, ok := projectCfg.Processes[parts[1]]; ok {
+				if procCfg.Port == port {
+					return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
+				}
+			}
+		} else {
+			// Mode A: running process owns all ports in [ports] table
+			cfg := m.projectConfigForKeyLocked(key)
+			if cfg == nil {
+				continue
+			}
+			for _, p := range cfg.DeclaredPorts() {
+				if p == port {
+					return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
+				}
 			}
 		}
 	}
