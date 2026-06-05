@@ -25,20 +25,20 @@ func Run(socketPath, dataDir string) error {
 	rt := NewRuntime(filepath.Join(dataDir, "runtime.json"))
 	reg := config.NewRegistry(filepath.Join(dataDir, "registry.json"))
 
-	// Crash recovery: kill orphan processes from previous run
-	killed, err := CleanupOrphans(rt)
-	if err != nil {
-		log.Printf("daemon: orphan cleanup error: %v", err)
-	}
-	if len(killed) > 0 {
-		log.Printf("daemon: cleaned up orphans: %v", killed)
-	}
+	// Find processes that survived the previous daemon instance.
+	// We do NOT kill them — dev services should survive daemon restarts.
+	orphans := LoadOrphans(rt)
 
 	logDir := filepath.Join(dataDir, "logs")
 	mgr := NewManager(reg, rt, logDir)
 	mgr.LoadAll()
 
-	// Auto-start projects marked autostart=true
+	// Re-adopt still-running processes from the previous daemon
+	for key, entry := range orphans {
+		mgr.AdoptProcess(key, entry)
+	}
+
+	// Auto-start projects marked autostart=true (idempotent: skips already-running)
 	for name, dir := range reg.List() {
 		cfg, err := config.LoadProject(filepath.Join(dir, "app-nanny.toml"))
 		if err != nil {
@@ -81,14 +81,11 @@ func Run(socketPath, dataDir string) error {
 	}()
 
 	<-sigCh
-	log.Println("daemon: shutting down")
+	log.Println("daemon: shutting down — services keep running")
 	ln.Close()
 	os.Remove(socketPath)
-
-	// Stop all running processes
-	for name := range reg.List() {
-		_ = mgr.Stop(name, "")
-	}
+	// Services are NOT stopped here. They continue running independently.
+	// Use `nanny stop <project>` to explicitly stop a service.
 	return nil
 }
 

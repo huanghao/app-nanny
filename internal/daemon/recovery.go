@@ -74,6 +74,24 @@ func CleanupOrphans(rt *Runtime) ([]string, error) {
 	return killed, rt.Save()
 }
 
+// LoadOrphans reads runtime.json and separates alive vs dead entries.
+// Alive entries are returned for adoption into the Manager (NOT killed).
+// Dead entries are cleared from runtime.
+// This is the new behavior: dev services survive daemon restarts.
+func LoadOrphans(rt *Runtime) map[string]RuntimeEntry {
+	alive := make(map[string]RuntimeEntry)
+	for key, entry := range rt.All() {
+		if processAlive(entry.PID) {
+			alive[key] = entry
+			log.Printf("recovery: found running process %q (pid=%d)", key, entry.PID)
+		}
+		// Always clear from runtime — it will be re-added when adopted
+		rt.Delete(key)
+	}
+	rt.Save() //nolint:errcheck
+	return alive
+}
+
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false

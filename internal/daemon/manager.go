@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,39 @@ func (m *Manager) startMetricsLoop() {
 			}
 		}
 	}()
+}
+
+// AdoptProcess reconnects the Manager to a process that survived a daemon restart.
+// The process is tracked but its stdout/stderr are not captured (no pipe was set up).
+func (m *Manager) AdoptProcess(key string, entry RuntimeEntry) {
+	parts := strings.SplitN(key, "/", 2)
+	projectName := parts[0]
+
+	m.mu.Lock()
+	cfg := m.configs[projectName]
+	m.mu.Unlock()
+
+	var procCfg config.ProcessConfig
+	if cfg != nil && len(parts) == 2 {
+		if pc, ok := cfg.Processes[parts[1]]; ok {
+			procCfg = pc
+		}
+	} else if cfg != nil {
+		procCfg = config.ProcessConfig{Command: cfg.Command}
+	}
+
+	proc := NewAdoptedProcess(key, procCfg, entry.PID, entry.PGID, entry.StartedAt)
+	if cfg != nil {
+		proc.SetOnCrash(func(k string) { m.onCrash(k, cfg) })
+	}
+
+	m.mu.Lock()
+	m.processes[key] = proc
+	m.runtime.Set(key, entry)
+	m.mu.Unlock()
+	m.runtime.Save() //nolint:errcheck
+
+	log.Printf("manager: re-adopted %q (pid=%d) — logs not captured until restart", key, entry.PID)
 }
 
 // logPath returns the log file path for a given process key.

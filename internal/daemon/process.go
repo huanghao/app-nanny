@@ -39,6 +39,7 @@ type Process struct {
 	crashCh   chan struct{}
 	onCrash   func(name string)
 	stdioW    io.Writer
+	adopted   bool // true if we reconnected to an existing PID (not started by us)
 }
 
 func NewProcess(name string, cfg config.ProcessConfig, workDir string) *Process {
@@ -48,6 +49,55 @@ func NewProcess(name string, cfg config.ProcessConfig, workDir string) *Process 
 		workDir: workDir,
 		status:  StatusStopped,
 		crashCh: make(chan struct{}),
+	}
+}
+
+// NewAdoptedProcess wraps an existing running process that survived a daemon restart.
+// Because we didn't start it, we have no *exec.Cmd — we watch it by polling.
+func NewAdoptedProcess(name string, cfg config.ProcessConfig, pid, pgid int, startedAt time.Time) *Process {
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	p := &Process{
+		name:      name,
+		cfg:       cfg,
+		status:    StatusRunning,
+		pid:       pid,
+		pgid:      pgid,
+		adopted:   true,
+		startedAt: startedAt,
+		crashCh:   make(chan struct{}),
+	}
+	go p.watchAdopted()
+	return p
+}
+
+// watchAdopted polls the PID every 2 seconds instead of calling cmd.Wait().
+func (p *Process) watchAdopted() {
+	for {
+		time.Sleep(2 * time.Second)
+		p.mu.Lock()
+		pid := p.pid
+		status := p.status
+		p.mu.Unlock()
+
+		if status == StatusStopping || status == StatusStopped {
+			return // intentional stop in progress
+		}
+		if !processAlive(pid) {
+			p.mu.Lock()
+			p.status = StatusCrashed
+			crashCh := p.crashCh
+			onCrash := p.onCrash
+			p.mu.Unlock()
+
+			close(crashCh)
+			log.Printf("process %q: exited (adopted, pid=%d)", p.name, pid)
+			if onCrash != nil {
+				onCrash(p.name)
+			}
+			return
+		}
 	}
 }
 
@@ -133,13 +183,31 @@ func (p *Process) Stop() error {
 		log.Printf("process %q: SIGTERM error: %v", p.name, err)
 	}
 
-	// Wait for watch() to detect exit — only watch() calls cmd.Wait().
-	// This avoids the double-Wait race that caused spurious onCrash triggers.
-	select {
-	case <-crashCh:
-	case <-time.After(5 * time.Second):
-		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
-		<-crashCh
+	p.mu.Lock()
+	adopted := p.adopted
+	pid := p.pid
+	p.mu.Unlock()
+
+	if adopted {
+		// Adopted processes have no cmd.Wait() — poll until dead.
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if !processAlive(pid) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if processAlive(pid) {
+			syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+		}
+	} else {
+		// Normal processes: wait for watch() to detect exit.
+		select {
+		case <-crashCh:
+		case <-time.After(5 * time.Second):
+			syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
+			<-crashCh
+		}
 	}
 
 	p.mu.Lock()
