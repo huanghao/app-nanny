@@ -276,6 +276,9 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 	defer m.mu.Unlock()
 
 	var out []ipc.ProcessInfo
+	seen := make(map[string]bool) // projects already represented in out
+
+	// 1. All tracked processes (running / stopped / crashed)
 	for key, proc := range m.processes {
 		parts := strings.SplitN(key, "/", 2)
 		project := parts[0]
@@ -283,11 +286,11 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 		if len(parts) == 2 {
 			process = parts[1]
 		}
+		seen[project] = true
 		uptime := ""
 		if proc.Status() == StatusRunning {
 			uptime = formatDuration(time.Since(proc.StartedAt()))
 		}
-		actualPorts := ActualPorts(proc.PID())
 		snap := m.metrics.Get(key)
 		out = append(out, ipc.ProcessInfo{
 			Project:     project,
@@ -296,10 +299,34 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			PID:         proc.PID(),
 			Uptime:      uptime,
 			Restarts:    proc.Restarts(),
-			ActualPorts: actualPorts,
+			ActualPorts: ActualPorts(proc.PID()),
 			MemMB:       snap.MemMB,
 		})
 	}
+
+	// 2. Registered projects not yet started — show as stopped so they're visible
+	for name := range m.registry.List() {
+		if seen[name] {
+			continue
+		}
+		cfg := m.configs[name]
+		if cfg == nil {
+			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped"})
+			continue
+		}
+		if cfg.IsModeB() {
+			for pName := range cfg.Processes {
+				out = append(out, ipc.ProcessInfo{
+					Project: name,
+					Process: pName,
+					Status:  "stopped",
+				})
+			}
+		} else {
+			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped"})
+		}
+	}
+
 	return out
 }
 
