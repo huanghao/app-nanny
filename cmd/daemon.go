@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"github.com/huanghao/app-nanny/internal/launchd"
 	"github.com/spf13/cobra"
 )
+
+// jsonUnmarshal is a local alias to avoid shadowing issues.
+var jsonUnmarshal = json.Unmarshal
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
@@ -74,12 +78,30 @@ var daemonStopCmd = &cobra.Command{
 
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show daemon status",
+	Short: "Show daemon status and version",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if isDaemonRunning() {
-			fmt.Println("daemon: running")
-		} else {
+		if !isDaemonRunning() {
 			fmt.Println("daemon: stopped")
+			fmt.Printf("cli:    nanny %s (commit %s)\n", buildVersion, buildCommit)
+			return nil
+		}
+
+		// Query daemon version via IPC
+		client := ipc.NewClient(SocketPath())
+		resp, err := client.Call("version", nil)
+		daemonVer, daemonCom := "unknown", "unknown"
+		if err == nil && resp != nil {
+			var info map[string]string
+			if jsonErr := jsonUnmarshal(resp.Result, &info); jsonErr == nil {
+				daemonVer = info["version"]
+				daemonCom = info["commit"]
+			}
+		}
+
+		fmt.Printf("daemon: running  nanny %s (commit %s)\n", daemonVer, daemonCom)
+		fmt.Printf("cli:    nanny %s (commit %s)\n", buildVersion, buildCommit)
+		if daemonVer != buildVersion {
+			fmt.Println("⚠  version mismatch — run: nanny daemon stop && nanny daemon start")
 		}
 		return nil
 	},

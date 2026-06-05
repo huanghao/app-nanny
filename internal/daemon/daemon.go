@@ -16,6 +16,15 @@ import (
 	"github.com/huanghao/app-nanny/internal/web"
 )
 
+var daemonVersion = "dev"
+var daemonCommit = "unknown"
+
+// SetVersion records the build-time version so the daemon can report it via IPC.
+func SetVersion(version, commit string) {
+	daemonVersion = version
+	daemonCommit = commit
+}
+
 // Run is the daemon entry point. It blocks until SIGTERM or SIGINT.
 func Run(socketPath, dataDir string) error {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -141,6 +150,13 @@ func registerHandlers(srv *ipc.Server, mgr *Manager, sigCh chan<- os.Signal) {
 	srv.Handle("shutdown", func(_ json.RawMessage) (any, error) {
 		go func() { sigCh <- syscall.SIGTERM }()
 		return "ok", nil
+	})
+
+	srv.Handle("version", func(_ json.RawMessage) (any, error) {
+		return map[string]string{
+			"version": daemonVersion,
+			"commit":  daemonCommit,
+		}, nil
 	})
 
 	srv.Handle("logs", func(params json.RawMessage) (any, error) {
