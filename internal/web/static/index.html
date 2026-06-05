@@ -25,6 +25,8 @@
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
     .port-dim { color: #484848; }
     .cwd { color: #444; font-size: 10px; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .err-badge { display: inline-block; background: #c0392b; color: #fff; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px; margin-left: 6px; cursor: pointer; vertical-align: middle; line-height: 16px; }
+    .err-badge:hover { background: #e74c3c; }
 
     /* Log panel */
     #log-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
@@ -65,6 +67,22 @@
 <script>
 let eventSource = null;
 let activeKey  = null;
+
+// ── Error acknowledgement ────────────────────────────────────────────────────
+const ACK_KEY = 'nanny-ack';
+
+function getAckTime(key) {
+  try { return JSON.parse(localStorage.getItem(ACK_KEY) || '{}')[key] || ''; }
+  catch { return ''; }
+}
+
+function setAckTime(key) {
+  try {
+    const map = JSON.parse(localStorage.getItem(ACK_KEY) || '{}');
+    map[key] = new Date().toISOString();
+    localStorage.setItem(ACK_KEY, JSON.stringify(map));
+  } catch {}
+}
 
 // ── Log panel resize ─────────────────────────────────────────────────────────
 const LS_HEIGHT = 'nanny-log-height';
@@ -202,8 +220,17 @@ async function loadPS() {
       setHTML(cells[0], projHTML);
       setText(cells[1], p.process || '—');
       setHTML(cells[2], portsHTML(p));       // PORTS (3rd)
+
+      // STATUS (4th) + error badge
       setClass(cells[3], p.status);
-      setText(cells[3], p.status);           // STATUS (4th)
+      const ackTime = getAckTime(key);
+      const hasNewErr = p.last_error_time && p.error_count > 0
+                     && new Date(p.last_error_time) > new Date(ackTime || 0);
+      const badgeHTML = hasNewErr
+        ? ` <span class="err-badge" title="点击确认" onclick="ackErr('${key}');event.stopPropagation()">${p.error_count}</span>`
+        : '';
+      setHTML(cells[3], p.status + badgeHTML);
+
       setText(cells[4], p.pid || '—');
       setText(cells[5], p.uptime || '—');
       setText(cells[6], mem);
@@ -223,6 +250,12 @@ async function loadPS() {
   }
 }
 
+function ackErr(key) {
+  setAckTime(key);
+  // Re-render immediately without waiting for the 3s poll
+  loadPS();
+}
+
 async function doAction(key, act) {
   const parts = key.split('/');
   const url = parts.length === 2
@@ -235,6 +268,7 @@ async function doAction(key, act) {
 function streamLogs(key) {
   if (eventSource) eventSource.close();
   activeKey = key;
+  setAckTime(key); // viewing logs = acknowledged
   document.getElementById('log-title').textContent = 'logs — ' + key;
   const logBody = document.getElementById('log-body');
   logBody.innerHTML = '';

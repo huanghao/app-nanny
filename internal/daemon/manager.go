@@ -463,17 +463,25 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			uptime = formatDuration(time.Since(proc.StartedAt()))
 		}
 		snap := m.metrics.Get(key)
+		errs := m.errRing.RecentForKey(key, 50)
+		errCount := len(errs)
+		lastErrTime := ""
+		if len(errs) > 0 {
+			lastErrTime = errs[0].Time.Format(time.RFC3339)
+		}
 		out = append(out, ipc.ProcessInfo{
-			Project:      project,
-			Process:      process,
-			Status:       string(proc.Status()),
-			PID:          proc.PID(),
-			Uptime:       uptime,
-			Restarts:     proc.Restarts(),
-			DeclaredPort: m.declaredPortForKey(key),
-			ActualPorts:  ActualPorts(proc.PID(), proc.PGID()),
-			MemMB:        snap.MemMB,
-			WorkDir:      proc.WorkDir(),
+			Project:       project,
+			Process:       process,
+			Status:        string(proc.Status()),
+			PID:           proc.PID(),
+			Uptime:        uptime,
+			Restarts:      proc.Restarts(),
+			DeclaredPort:  m.declaredPortForKey(key),
+			ActualPorts:   ActualPorts(proc.PID(), proc.PGID()),
+			MemMB:         snap.MemMB,
+			WorkDir:       proc.WorkDir(),
+			ErrorCount:    errCount,
+			LastErrorTime: lastErrTime,
 		})
 	}
 

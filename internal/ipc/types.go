@@ -61,8 +61,10 @@ type ProcessInfo struct {
 	Restarts     int     `json:"restarts"`
 	DeclaredPort int     `json:"declared_port"`
 	ActualPorts  []int   `json:"actual_ports"`
-	MemMB        float64 `json:"mem_mb"`
-	WorkDir      string  `json:"work_dir"`
+	MemMB         float64 `json:"mem_mb"`
+	WorkDir       string  `json:"work_dir"`
+	ErrorCount    int     `json:"error_count"`
+	LastErrorTime string  `json:"last_error_time"` // RFC3339, empty if no errors
 }
 
 type PSResult struct {
