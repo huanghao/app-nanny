@@ -107,32 +107,45 @@ func (m *Manager) logPath(key string) string {
 }
 
 // LogPath returns the log file path for a key.
-// For Mode B project names (no subprocess specified), returns "" because there
-// is no single file to tail — the caller should ask for a specific subprocess.
+// Returns "" for Mode B project names (multiple processes — no single file to tail).
 func (m *Manager) LogPath(key string) string {
-	// Direct key: check if the log file exists
-	if _, hasLogger := m.loggers[key]; hasLogger {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Direct active logger
+	if _, ok := m.loggers[key]; ok {
 		return m.logPath(key)
 	}
-	// Mode B project name: no single path, return empty
+	// Adopted process: log file may exist from a previous run
+	if _, ok := m.processes[key]; ok {
+		return m.logPath(key)
+	}
+	// Mode B project name: check for subprocesses
 	prefix := key + "/"
-	for k := range m.loggers {
+	for k := range m.processes {
 		if strings.HasPrefix(k, prefix) {
-			return "" // multiple sub-loggers, can't return one path
+			return "" // multiple sub-processes, no single path
 		}
 	}
 	return m.logPath(key)
 }
 
-// SubProcessKeys returns the list of known sub-process keys for a project.
-// Returns nil if the project is Mode A (has a direct logger) or unknown.
+// SubProcessKeys returns sub-process keys for a Mode B project.
+// Checks both active loggers AND adopted processes (no logger but known PID).
 func (m *Manager) SubProcessKeys(project string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	prefix := project + "/"
+	seen := make(map[string]bool)
 	var keys []string
 	for k := range m.loggers {
-		if strings.HasPrefix(k, prefix) {
+		if strings.HasPrefix(k, prefix) && !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	for k := range m.processes {
+		if strings.HasPrefix(k, prefix) && !seen[k] {
+			seen[k] = true
 			keys = append(keys, k)
 		}
 	}
@@ -141,54 +154,93 @@ func (m *Manager) SubProcessKeys(project string) []string {
 }
 
 // LogLines returns the last n lines for a key.
-// If key is a Mode B project name (no subprocess), aggregates from all
-// subprocesses, prefixing each line with "[processname] ".
+//   - Direct key with active logger → in-memory ring buffer (freshest data)
+//   - Direct key without logger (adopted) → read log file from disk
+//   - Mode B project name → aggregate from all subprocesses (logger or file)
 func (m *Manager) LogLines(key string, n int) []string {
 	m.mu.Lock()
-	logger, directOK := m.loggers[key]
+	logger, hasLogger := m.loggers[key]
 	m.mu.Unlock()
 
-	if directOK {
+	// 1. Direct in-memory logger (process started by this daemon instance)
+	if hasLogger {
 		return logger.TailLines(n)
 	}
 
-	// Mode B: aggregate from all sub-process loggers
+	// 2. Check if this is a Mode B project name (no subprocess suffix)
 	prefix := key + "/"
 	m.mu.Lock()
-	type entry struct {
-		procName string
-		logger   *Logger
+	type sub struct {
+		name   string
+		key    string
+		logger *Logger // nil for adopted processes
 	}
-	var subs []entry
+	seen := make(map[string]bool)
+	var subs []sub
 	for k, lg := range m.loggers {
 		if strings.HasPrefix(k, prefix) {
-			subs = append(subs, entry{strings.TrimPrefix(k, prefix), lg})
+			name := strings.TrimPrefix(k, prefix)
+			if !seen[name] {
+				seen[name] = true
+				subs = append(subs, sub{name, k, lg})
+			}
+		}
+	}
+	// Include adopted processes that have no logger but may have a log file
+	for k := range m.processes {
+		if strings.HasPrefix(k, prefix) {
+			name := strings.TrimPrefix(k, prefix)
+			if !seen[name] {
+				seen[name] = true
+				subs = append(subs, sub{name, k, nil})
+			}
 		}
 	}
 	m.mu.Unlock()
 
-	if len(subs) == 0 {
+	if len(subs) > 0 {
+		sort.Slice(subs, func(i, j int) bool { return subs[i].name < subs[j].name })
+		perProc := n / len(subs)
+		if perProc < 20 {
+			perProc = 20
+		}
+		var all []string
+		for _, s := range subs {
+			var lines []string
+			if s.logger != nil {
+				lines = s.logger.TailLines(perProc)
+			} else {
+				lines = tailLogFile(m.logPath(s.key), perProc)
+			}
+			for _, line := range lines {
+				all = append(all, "["+s.name+"] "+line)
+			}
+		}
+		if len(all) > n {
+			all = all[len(all)-n:]
+		}
+		return all
+	}
+
+	// 3. Direct key, no logger — read log file (adopted process or previous run)
+	return tailLogFile(m.logPath(key), n)
+}
+
+// tailLogFile reads the last n lines from a log file on disk.
+func tailLogFile(path string, n int) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil
 	}
-
-	// Sort for consistent ordering
-	sort.Slice(subs, func(i, j int) bool { return subs[i].procName < subs[j].procName })
-
-	perProc := n / len(subs)
-	if perProc < 20 {
-		perProc = 20
+	trimmed := strings.TrimRight(string(data), "\n")
+	if trimmed == "" {
+		return nil
 	}
-
-	var all []string
-	for _, s := range subs {
-		for _, line := range s.logger.TailLines(perProc) {
-			all = append(all, "["+s.procName+"] "+line)
-		}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
 	}
-	if len(all) > n {
-		all = all[len(all)-n:]
-	}
-	return all
+	return lines
 }
 
 // RecentErrors returns the most recent error events for key.
