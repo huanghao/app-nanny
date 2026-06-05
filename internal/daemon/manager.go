@@ -52,6 +52,12 @@ func (m *Manager) Remove(name string) error {
 			return fmt.Errorf("project %q has running processes; stop it first", name)
 		}
 	}
+	// Remove all stopped/crashed process entries for this project
+	for key := range m.processes {
+		if strings.HasPrefix(key, name) {
+			delete(m.processes, key)
+		}
+	}
 	delete(m.configs, name)
 	return m.registry.Remove(name)
 }
@@ -292,7 +298,8 @@ func ActualPorts(pid int) []int {
 	if pid == 0 {
 		return nil
 	}
-	out, err := exec.Command("lsof", "-p", fmt.Sprintf("%d", pid), "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
+	// -a ANDs the conditions so -p and -i filter together (not OR)
+	out, err := exec.Command("lsof", "-a", "-p", fmt.Sprintf("%d", pid), "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
 	if err != nil {
 		return nil
 	}

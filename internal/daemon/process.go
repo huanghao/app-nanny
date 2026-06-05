@@ -111,23 +111,20 @@ func (p *Process) Stop() error {
 	}
 	p.status = StatusStopping
 	pgid := p.pgid
+	crashCh := p.crashCh // capture before unlock; watch() closes this on exit
 	p.mu.Unlock()
 
 	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
 		log.Printf("process %q: SIGTERM error: %v", p.name, err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		p.cmd.Wait() //nolint:errcheck
-		close(done)
-	}()
-
+	// Wait for watch() to detect exit — only watch() calls cmd.Wait().
+	// This avoids the double-Wait race that caused spurious onCrash triggers.
 	select {
-	case <-done:
+	case <-crashCh:
 	case <-time.After(5 * time.Second):
 		syscall.Kill(-pgid, syscall.SIGKILL) //nolint:errcheck
-		<-done
+		<-crashCh
 	}
 
 	p.mu.Lock()
@@ -139,20 +136,20 @@ func (p *Process) Stop() error {
 }
 
 func (p *Process) watch() {
-	err := p.cmd.Wait()
+	p.cmd.Wait() //nolint:errcheck
 
 	p.mu.Lock()
-	stopping := p.status == StatusStopping
-	if !stopping {
+	intentional := p.status == StatusStopping
+	if !intentional {
 		p.status = StatusCrashed
-		log.Printf("process %q crashed: %v", p.name, err)
+		log.Printf("process %q: exited unexpectedly", p.name)
 	}
 	crashCh := p.crashCh
 	onCrash := p.onCrash
 	p.mu.Unlock()
 
-	close(crashCh)
-	if !stopping && onCrash != nil {
+	close(crashCh) // always close: unblocks Stop() if it's waiting
+	if !intentional && onCrash != nil {
 		onCrash(p.name)
 	}
 }
