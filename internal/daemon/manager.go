@@ -287,22 +287,20 @@ func (m *Manager) Remove(name string) error {
 
 func (m *Manager) Start(projectName, processName string) error {
 	m.mu.Lock()
-	cfg, ok := m.configs[projectName]
-	if !ok {
-		dir, found := m.registry.Get(projectName)
-		if !found {
-			m.mu.Unlock()
-			return fmt.Errorf("project %q not registered", projectName)
-		}
-		loaded, err := config.LoadProject(filepath.Join(dir, "app-nanny.toml"))
-		if err != nil {
-			m.mu.Unlock()
-			return err
-		}
-		cfg = loaded
-		m.configs[projectName] = cfg
+	dir, found := m.registry.Get(projectName)
+	m.mu.Unlock()
+	if !found {
+		return fmt.Errorf("project %q not registered", projectName)
 	}
-	dir, _ := m.registry.Get(projectName)
+
+	// Always re-read the toml so edits take effect on next start/restart
+	cfg, err := config.LoadProject(filepath.Join(dir, "app-nanny.toml"))
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.configs[projectName] = cfg
 	m.mu.Unlock()
 
 	if cfg.IsModeB() {
