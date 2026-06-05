@@ -10,16 +10,16 @@
     #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; display: inline-block; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th { text-align: left; padding: 8px 12px; background: #252526; color: #858585; font-weight: normal; border-bottom: 1px solid #3c3c3c; }
-    td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; }
+    td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: middle; }
     tr:hover td { background: #2a2a2a; }
     .running { color: #4ec9b0; }
-    .stopped { color: #858585; }
+    .stopped { color: #585858; }
     .crashed { color: #f48771; }
     .btn { background: #3c3c3c; border: none; color: #d4d4d4; padding: 3px 10px; cursor: pointer; border-radius: 3px; font-family: monospace; font-size: 12px; margin: 0 2px; }
     .btn:hover { background: #505050; }
     a.port-link { color: #4ec9b0; text-decoration: none; }
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
-    .port-declared { color: #585858; font-size: 11px; }
+    .port-dim { color: #484848; }
     #log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 240px; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
     #log-header { background: #252526; padding: 6px 12px; font-size: 12px; color: #858585; display: flex; justify-content: space-between; }
     #log-body { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; line-height: 1.6; }
@@ -34,7 +34,7 @@
   <span id="daemon-status" style="color:#858585;font-size:12px">loading...</span>
 </header>
 <div class="main">
-  <table id="proc-table">
+  <table>
     <thead><tr>
       <th>PROJECT</th><th>PROCESS</th><th>STATUS</th><th>PID</th>
       <th>UPTIME</th><th>MEM</th><th>PORTS</th><th>ACTIONS</th>
@@ -52,57 +52,97 @@
 <script>
 let eventSource = null;
 
-// Build the ports cell: clickable links for actual ports, grayed out for declared-only
 function portsHTML(p) {
   const actual = p.actual_ports || [];
   const declared = p.declared_port || 0;
-
   if (actual.length > 0) {
-    // Running and listening — show clickable links
     return actual.map(port =>
       `<a class="port-link" href="http://localhost:${port}" target="_blank">${port}</a>`
-    ).join('&nbsp; ');
+    ).join('&nbsp;');
   }
-
   if (declared > 0) {
     if (p.status === 'running') {
-      // Running but not yet detected as listening (service still starting up)
       return `<a class="port-link" href="http://localhost:${declared}" target="_blank">${declared}</a>`
-           + `&nbsp;<span class="port-declared">(starting)</span>`;
+           + `&nbsp;<span class="port-dim">(starting)</span>`;
     }
-    // Stopped — show declared port grayed out, not clickable
-    return `<span class="port-declared">${declared}</span>`;
+    return `<span class="port-dim">${declared}</span>`;
   }
+  return '<span class="port-dim">—</span>';
+}
 
-  return '<span class="port-declared">—</span>';
+function actionsHTML(key) {
+  return `<button class="btn" onclick="doAction('${key}','start')" title="start">&#9654;</button>`
+       + `<button class="btn" onclick="doAction('${key}','stop')" title="stop">&#9632;</button>`
+       + `<button class="btn" onclick="doAction('${key}','restart')" title="restart">&#8634;</button>`
+       + `<button class="btn" onclick="streamLogs('${key}')" title="logs">logs</button>`;
+}
+
+// Update a td's text only when it actually changed (avoids unnecessary repaints)
+function setText(td, text) {
+  if (td.textContent !== String(text)) td.textContent = text;
+}
+function setHTML(td, html) {
+  if (td.innerHTML !== html) td.innerHTML = html;
+}
+function setClass(td, cls) {
+  if (td.className !== cls) td.className = cls;
 }
 
 async function loadPS() {
   try {
     const r = await fetch('/api/ps');
     const data = await r.json();
-    const tbody = document.getElementById('proc-body');
-    tbody.innerHTML = '';
-    (data.processes || []).forEach(p => {
-      const key = p.process ? p.project + '/' + p.process : p.project;
-      const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${p.project}</td>
-        <td>${p.process || '—'}</td>
-        <td class="${p.status}">${p.status}</td>
-        <td>${p.pid || '—'}</td>
-        <td>${p.uptime || '—'}</td>
-        <td>${mem}</td>
-        <td>${portsHTML(p)}</td>
-        <td>
-          <button class="btn" onclick="action('${key}','start')" title="start">&#9654;</button>
-          <button class="btn" onclick="action('${key}','stop')" title="stop">&#9632;</button>
-          <button class="btn" onclick="action('${key}','restart')" title="restart">&#8634;</button>
-          <button class="btn" onclick="streamLogs('${key}')" title="logs">logs</button>
-        </td>`;
-      tbody.appendChild(tr);
+    const processes = data.processes || [];
+
+    // Backend already sorts, but sort again defensively
+    processes.sort((a, b) => {
+      const ka = a.project + '\0' + (a.process || '');
+      const kb = b.project + '\0' + (b.process || '');
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
+
+    const tbody = document.getElementById('proc-body');
+
+    // Build map of existing rows by key
+    const rowMap = new Map();
+    for (const tr of tbody.querySelectorAll('tr[data-key]')) {
+      rowMap.set(tr.dataset.key, tr);
+    }
+
+    // Update or create rows, keep them in sorted order
+    processes.forEach((p, i) => {
+      const key = p.process ? `${p.project}/${p.process}` : p.project;
+      const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
+
+      let tr = rowMap.get(key);
+      if (!tr) {
+        // New row — create once
+        tr = document.createElement('tr');
+        tr.dataset.key = key;
+        for (let c = 0; c < 8; c++) tr.appendChild(document.createElement('td'));
+        tr.querySelectorAll('td')[7].innerHTML = actionsHTML(key);
+      }
+      rowMap.delete(key); // mark visited
+
+      const cells = tr.querySelectorAll('td');
+      setText(cells[0], p.project);
+      setText(cells[1], p.process || '—');
+      setClass(cells[2], p.status);
+      setText(cells[2], p.status);
+      setText(cells[3], p.pid || '—');
+      setText(cells[4], p.uptime || '—');
+      setText(cells[5], mem);
+      setHTML(cells[6], portsHTML(p));
+      // actions column never changes, skip
+
+      // Ensure row is at position i in tbody
+      const sibling = tbody.children[i];
+      if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
+    });
+
+    // Remove rows for services no longer present
+    for (const tr of rowMap.values()) tr.remove();
+
     document.getElementById('daemon-status').textContent = 'daemon: running';
     document.getElementById('status-dot').style.background = '#4ec9b0';
   } catch(e) {
@@ -111,13 +151,13 @@ async function loadPS() {
   }
 }
 
-async function action(key, act) {
+async function doAction(key, act) {
   const parts = key.split('/');
   const url = parts.length === 2
     ? `/api/${parts[0]}/${parts[1]}/${act}`
     : `/api/${key}/${act}`;
   await fetch(url, { method: 'POST' });
-  setTimeout(loadPS, 500);
+  setTimeout(loadPS, 400);
 }
 
 function streamLogs(key) {
@@ -129,8 +169,7 @@ function streamLogs(key) {
   eventSource = new EventSource('/api/logs/' + sseKey + '/stream');
   eventSource.onmessage = e => {
     const line = document.createElement('div');
-    const isErr = /\b5\d{2}\b|Error:|panic:|FATAL/i.test(e.data);
-    if (isErr) line.className = 'err';
+    if (/\b5\d{2}\b|Error:|panic:|FATAL/i.test(e.data)) line.className = 'err';
     line.textContent = e.data;
     logBody.appendChild(line);
     logBody.scrollTop = logBody.scrollHeight;

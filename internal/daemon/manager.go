@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -381,6 +382,13 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			})
 		}
 	}
+
+	// Stable order: sort by "project/process" so the list never jumps around
+	sort.Slice(out, func(i, j int) bool {
+		ki := out[i].Project + "\x00" + out[i].Process
+		kj := out[j].Project + "\x00" + out[j].Process
+		return ki < kj
+	})
 
 	return out
 }
