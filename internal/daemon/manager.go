@@ -303,14 +303,15 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 		}
 		snap := m.metrics.Get(key)
 		out = append(out, ipc.ProcessInfo{
-			Project:     project,
-			Process:     process,
-			Status:      string(proc.Status()),
-			PID:         proc.PID(),
-			Uptime:      uptime,
-			Restarts:    proc.Restarts(),
-			ActualPorts: ActualPorts(proc.PID()),
-			MemMB:       snap.MemMB,
+			Project:      project,
+			Process:      process,
+			Status:       string(proc.Status()),
+			PID:          proc.PID(),
+			Uptime:       uptime,
+			Restarts:     proc.Restarts(),
+			DeclaredPort: m.declaredPortForKey(key),
+			ActualPorts:  ActualPorts(proc.PID(), proc.PGID()),
+			MemMB:        snap.MemMB,
 		})
 	}
 
@@ -325,15 +326,25 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			continue
 		}
 		if cfg.IsModeB() {
-			for pName := range cfg.Processes {
+			for pName, pCfg := range cfg.Processes {
 				out = append(out, ipc.ProcessInfo{
-					Project: name,
-					Process: pName,
-					Status:  "stopped",
+					Project:      name,
+					Process:      pName,
+					Status:       "stopped",
+					DeclaredPort: pCfg.Port,
 				})
 			}
 		} else {
-			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped"})
+			var firstPort int
+			for _, p := range cfg.Ports {
+				firstPort = p
+				break
+			}
+			out = append(out, ipc.ProcessInfo{
+				Project:      name,
+				Status:       "stopped",
+				DeclaredPort: firstPort,
+			})
 		}
 	}
 
@@ -394,6 +405,28 @@ func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) err
 func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
 	parts := strings.SplitN(key, "/", 2)
 	return m.configs[parts[0]]
+}
+
+// declaredPortForKey returns the configured port for a process key.
+// For Mode B ("project/process") returns that process's declared port.
+// For Mode A ("project") returns the first port in [ports], or 0 if none.
+func (m *Manager) declaredPortForKey(key string) int {
+	parts := strings.SplitN(key, "/", 2)
+	cfg := m.configs[parts[0]]
+	if cfg == nil {
+		return 0
+	}
+	if len(parts) == 2 {
+		if procCfg, ok := cfg.Processes[parts[1]]; ok {
+			return procCfg.Port
+		}
+		return 0
+	}
+	// Mode A: return first port value
+	for _, port := range cfg.Ports {
+		return port
+	}
+	return 0
 }
 
 func (m *Manager) onCrash(key string, cfg *config.ProjectConfig) {
@@ -457,7 +490,7 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 			Uptime:      uptime,
 			Restarts:    proc.Restarts(),
 			MemMB:       snap.MemMB,
-			ActualPorts: ActualPorts(proc.PID()),
+			ActualPorts: ActualPorts(proc.PID(), proc.PGID()),
 			ErrorCount:  errCount,
 			LogPath:     m.logPath(key),
 		})
@@ -465,15 +498,32 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 	return ipc.StatusResult{Processes: statuses}
 }
 
-func ActualPorts(pid int) []int {
+// ActualPorts returns TCP listening ports for a process and all its children.
+// We scan by PGID because the managed command runs inside `sh -c "..."`,
+// so the actual server (Flask, Node, etc.) is a child of the shell we started.
+func ActualPorts(pid, pgid int) []int {
 	if pid == 0 {
 		return nil
 	}
-	// -a ANDs the conditions so -p and -i filter together (not OR)
-	out, err := exec.Command("lsof", "-a", "-p", fmt.Sprintf("%d", pid), "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
+
+	// Collect all PIDs in the process group via pgrep
+	pidList := fmt.Sprintf("%d", pid) // fallback: just the direct PID
+	if pgid > 0 {
+		if pgrpOut, err := exec.Command("pgrep", "-g", fmt.Sprintf("%d", pgid)).Output(); err == nil {
+			lines := strings.Fields(string(pgrpOut))
+			if len(lines) > 0 {
+				pidList = strings.Join(lines, ",")
+			}
+		}
+	}
+
+	// lsof -a: AND conditions so -p and -i both apply
+	out, err := exec.Command("lsof", "-a", "-p", pidList, "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
 	if err != nil {
 		return nil
 	}
+
+	seen := make(map[int]bool)
 	var ports []int
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.HasPrefix(line, "n") {
@@ -485,7 +535,8 @@ func ActualPorts(pid int) []int {
 		}
 		var port int
 		fmt.Sscanf(parts[len(parts)-1], "%d", &port)
-		if port > 0 {
+		if port > 0 && !seen[port] {
+			seen[port] = true
 			ports = append(ports, port)
 		}
 	}
