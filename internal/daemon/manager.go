@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -19,15 +20,74 @@ type Manager struct {
 	runtime   *Runtime
 	processes map[string]*Process
 	configs   map[string]*config.ProjectConfig
+	logDir    string
+	loggers   map[string]*Logger
+	errRing   *ErrorRing
+	metrics   *Metrics
 }
 
-func NewManager(reg *config.Registry, rt *Runtime) *Manager {
-	return &Manager{
+func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
+	m := &Manager{
 		registry:  reg,
 		runtime:   rt,
 		processes: make(map[string]*Process),
 		configs:   make(map[string]*config.ProjectConfig),
+		logDir:    logDir,
+		loggers:   make(map[string]*Logger),
+		errRing:   NewErrorRing(),
+		metrics:   NewMetrics(),
 	}
+	m.startMetricsLoop()
+	return m
+}
+
+func (m *Manager) startMetricsLoop() {
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			m.mu.Lock()
+			type kp struct {
+				key string
+				pid int
+			}
+			var running []kp
+			for key, proc := range m.processes {
+				if proc.Status() == StatusRunning {
+					running = append(running, kp{key, proc.PID()})
+				}
+			}
+			m.mu.Unlock()
+			for _, r := range running {
+				m.metrics.Update(r.key, r.pid)
+			}
+		}
+	}()
+}
+
+// logPath returns the log file path for a given process key.
+func (m *Manager) logPath(key string) string {
+	sanitized := strings.ReplaceAll(key, "/", "-")
+	return filepath.Join(m.logDir, sanitized+".log")
+}
+
+// LogPath returns the log file path for a key (exported for IPC handler).
+func (m *Manager) LogPath(key string) string { return m.logPath(key) }
+
+// LogLines returns the last n lines from the in-memory ring buffer for key.
+func (m *Manager) LogLines(key string, n int) []string {
+	m.mu.Lock()
+	logger, ok := m.loggers[key]
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return logger.TailLines(n)
+}
+
+// RecentErrors returns the most recent error events for key.
+func (m *Manager) RecentErrors(key string, n int) []ErrorEvent {
+	return m.errRing.RecentForKey(key, n)
 }
 
 func (m *Manager) Add(name, dir string) error {
@@ -56,6 +116,11 @@ func (m *Manager) Remove(name string) error {
 	for key := range m.processes {
 		if strings.HasPrefix(key, name) {
 			delete(m.processes, key)
+		}
+	}
+	for key := range m.loggers {
+		if strings.HasPrefix(key, name) {
+			delete(m.loggers, key)
 		}
 	}
 	delete(m.configs, name)
@@ -99,6 +164,15 @@ func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string)
 	m.mu.Unlock()
 
 	proc := NewProcess(name, config.ProcessConfig{Command: cfg.Command}, dir)
+	if err := os.MkdirAll(m.logDir, 0755); err == nil {
+		if rf, err := NewRotatingFile(m.logPath(name), 50*1024*1024, 3); err == nil {
+			lg := NewLogger(rf, m.errRing, name, cfg.ErrorPatterns)
+			proc.SetStdio(lg)
+			m.mu.Lock()
+			m.loggers[name] = lg
+			m.mu.Unlock()
+		}
+	}
 	env := make(map[string]string)
 	for k, v := range cfg.Ports {
 		env[k] = fmt.Sprintf("%d", v)
@@ -138,6 +212,15 @@ func (m *Manager) startModeB(projectName, processName string, cfg *config.Projec
 			workDir = filepath.Join(dir, pCfg.WorkingDir)
 		}
 		proc := NewProcess(key, pCfg, workDir)
+		if err := os.MkdirAll(m.logDir, 0755); err == nil {
+			if rf, err := NewRotatingFile(m.logPath(key), 50*1024*1024, 3); err == nil {
+				lg := NewLogger(rf, m.errRing, key, cfg.ErrorPatterns)
+				proc.SetStdio(lg)
+				m.mu.Lock()
+				m.loggers[key] = lg
+				m.mu.Unlock()
+			}
+		}
 		proc.SetEnv(map[string]string{"PORT": fmt.Sprintf("%d", pCfg.Port)})
 		proc.SetOnCrash(func(k string) { m.onCrash(k, cfg) })
 		if err := proc.Start(); err != nil {
@@ -205,6 +288,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			uptime = formatDuration(time.Since(proc.StartedAt()))
 		}
 		actualPorts := ActualPorts(proc.PID())
+		snap := m.metrics.Get(key)
 		out = append(out, ipc.ProcessInfo{
 			Project:     project,
 			Process:     process,
@@ -213,6 +297,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			Uptime:      uptime,
 			Restarts:    proc.Restarts(),
 			ActualPorts: actualPorts,
+			MemMB:       snap.MemMB,
 		})
 	}
 	return out

@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os/exec"
 	"strings"
@@ -37,6 +38,7 @@ type Process struct {
 	cmd       *exec.Cmd
 	crashCh   chan struct{}
 	onCrash   func(name string)
+	stdioW    io.Writer
 }
 
 func NewProcess(name string, cfg config.ProcessConfig, workDir string) *Process {
@@ -59,6 +61,14 @@ func (p *Process) SetOnCrash(fn func(name string)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.onCrash = fn
+}
+
+// SetStdio sets the writer that receives all stdout and stderr output.
+// Must be called before Start().
+func (p *Process) SetStdio(w io.Writer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.stdioW = w
 }
 
 func (p *Process) Start() error {
@@ -87,6 +97,11 @@ func (p *Process) Start() error {
 
 	// Put child in its own process group for clean shutdown
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	if p.stdioW != nil {
+		cmd.Stdout = p.stdioW
+		cmd.Stderr = p.stdioW
+	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %q: %w", p.name, err)

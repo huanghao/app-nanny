@@ -16,7 +16,7 @@ func setupManager(t *testing.T) (*daemon.Manager, string) {
 	dir := t.TempDir()
 	rt := daemon.NewRuntime(filepath.Join(dir, "runtime.json"))
 	reg := config.NewRegistry(filepath.Join(dir, "registry.json"))
-	m := daemon.NewManager(reg, rt)
+	m := daemon.NewManager(reg, rt, t.TempDir())
 	return m, dir
 }
 

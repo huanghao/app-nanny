@@ -33,7 +33,8 @@ func Run(socketPath, dataDir string) error {
 		log.Printf("daemon: cleaned up orphans: %v", killed)
 	}
 
-	mgr := NewManager(reg, rt)
+	logDir := filepath.Join(dataDir, "logs")
+	mgr := NewManager(reg, rt, logDir)
 	mgr.LoadAll()
 
 	// Auto-start projects marked autostart=true

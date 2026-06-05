@@ -53,14 +53,15 @@ type StatusParams struct {
 }
 
 type ProcessInfo struct {
-	Project      string `json:"project"`
-	Process      string `json:"process"`
-	Status       string `json:"status"`
-	PID          int    `json:"pid"`
-	Uptime       string `json:"uptime"`
-	Restarts     int    `json:"restarts"`
-	DeclaredPort int    `json:"declared_port"`
-	ActualPorts  []int  `json:"actual_ports"`
+	Project      string  `json:"project"`
+	Process      string  `json:"process"`
+	Status       string  `json:"status"`
+	PID          int     `json:"pid"`
+	Uptime       string  `json:"uptime"`
+	Restarts     int     `json:"restarts"`
+	DeclaredPort int     `json:"declared_port"`
+	ActualPorts  []int   `json:"actual_ports"`
+	MemMB        float64 `json:"mem_mb"`
 }
 
 type PSResult struct {
