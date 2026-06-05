@@ -379,6 +379,38 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+// DetailedStatus returns per-process status for a named project.
+func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var statuses []ipc.ProcessStatus
+	for key, proc := range m.processes {
+		parts := strings.SplitN(key, "/", 2)
+		if parts[0] != projectName {
+			continue
+		}
+		snap := m.metrics.Get(key)
+		errCount := len(m.errRing.RecentForKey(key, 50))
+		uptime := ""
+		if proc.Status() == StatusRunning {
+			uptime = formatDuration(time.Since(proc.StartedAt()))
+		}
+		statuses = append(statuses, ipc.ProcessStatus{
+			Key:         key,
+			Status:      string(proc.Status()),
+			PID:         proc.PID(),
+			Uptime:      uptime,
+			Restarts:    proc.Restarts(),
+			MemMB:       snap.MemMB,
+			ActualPorts: ActualPorts(proc.PID()),
+			ErrorCount:  errCount,
+			LogPath:     m.logPath(key),
+		})
+	}
+	return ipc.StatusResult{Processes: statuses}
+}
+
 func ActualPorts(pid int) []int {
 	if pid == 0 {
 		return nil

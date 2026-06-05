@@ -72,3 +72,51 @@ type AddResult struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
+
+// --- Observability params ---
+
+type LogsParams struct {
+	Name    string `json:"name"`
+	Process string `json:"process,omitempty"`
+	Lines   int    `json:"lines"` // 0 = default 100
+}
+
+type LogsResult struct {
+	Lines []string `json:"lines"`
+	Path  string   `json:"path"` // log file path for follow mode
+}
+
+type ErrorsParams struct {
+	Name    string `json:"name"`
+	Process string `json:"process,omitempty"`
+	Last    bool   `json:"last"` // return only the most recent event
+}
+
+type ErrorsResult struct {
+	Events []ErrorEvent `json:"events"`
+}
+
+// ErrorEvent mirrors daemon.ErrorEvent for JSON transport.
+type ErrorEvent struct {
+	Time  string   `json:"time"`
+	Key   string   `json:"key"`
+	Lines []string `json:"lines"`
+}
+
+// StatusResult is the response to "status <name>".
+type StatusResult struct {
+	Processes []ProcessStatus `json:"processes"`
+}
+
+// ProcessStatus is the detailed view of one process.
+type ProcessStatus struct {
+	Key         string  `json:"key"`
+	Status      string  `json:"status"`
+	PID         int     `json:"pid"`
+	Uptime      string  `json:"uptime"`
+	Restarts    int     `json:"restarts"`
+	MemMB       float64 `json:"mem_mb"`
+	ActualPorts []int   `json:"actual_ports"`
+	ErrorCount  int     `json:"error_count"`
+	LogPath     string  `json:"log_path"`
+}

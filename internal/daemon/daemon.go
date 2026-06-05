@@ -134,4 +134,56 @@ func registerHandlers(srv *ipc.Server, mgr *Manager, sigCh chan<- os.Signal) {
 		go func() { sigCh <- syscall.SIGTERM }()
 		return "ok", nil
 	})
+
+	srv.Handle("logs", func(params json.RawMessage) (any, error) {
+		var p ipc.LogsParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		key := p.Name
+		if p.Process != "" {
+			key = p.Name + "/" + p.Process
+		}
+		n := p.Lines
+		if n <= 0 {
+			n = 100
+		}
+		return ipc.LogsResult{
+			Lines: mgr.LogLines(key, n),
+			Path:  mgr.LogPath(key),
+		}, nil
+	})
+
+	srv.Handle("errors", func(params json.RawMessage) (any, error) {
+		var p ipc.ErrorsParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		key := p.Name
+		if p.Process != "" {
+			key = p.Name + "/" + p.Process
+		}
+		n := 10
+		if p.Last {
+			n = 1
+		}
+		raw := mgr.RecentErrors(key, n)
+		events := make([]ipc.ErrorEvent, len(raw))
+		for i, e := range raw {
+			events[i] = ipc.ErrorEvent{
+				Time:  e.Time.Format("15:04:05"),
+				Key:   e.Key,
+				Lines: e.Lines,
+			}
+		}
+		return ipc.ErrorsResult{Events: events}, nil
+	})
+
+	srv.Handle("status", func(params json.RawMessage) (any, error) {
+		var p ipc.StatusParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		return mgr.DetailedStatus(p.Name), nil
+	})
 }
