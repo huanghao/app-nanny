@@ -1,8 +1,13 @@
 # app-nanny build tasks
 
-# Build binary
+# Version string: git tag if available, else short commit hash
+_version := `git describe --tags --always --dirty 2>/dev/null || echo "dev"`
+_commit  := `git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
+_ldflags := "-X main.version=" + _version + " -X main.commit=" + _commit
+
+# Build binary with version info embedded
 build:
-    go build -o nanny .
+    go build -ldflags "{{_ldflags}}" -o nanny .
 
 # Run all tests
 test:

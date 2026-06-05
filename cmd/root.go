@@ -9,6 +9,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+)
+
+// SetVersion is called from main() to inject build-time version info.
+func SetVersion(version, commit string) {
+	buildVersion = version
+	buildCommit = commit
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "nanny",
 	Short: "Local dev service manager",
