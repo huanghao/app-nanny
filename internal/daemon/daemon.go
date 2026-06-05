@@ -172,9 +172,15 @@ func registerHandlers(srv *ipc.Server, mgr *Manager, sigCh chan<- os.Signal) {
 		if n <= 0 {
 			n = 100
 		}
+		path := mgr.LogPath(key)
+		var subKeys []string
+		if path == "" {
+			subKeys = mgr.SubProcessKeys(p.Name)
+		}
 		return ipc.LogsResult{
-			Lines: mgr.LogLines(key, n),
-			Path:  mgr.LogPath(key),
+			Lines:   mgr.LogLines(key, n),
+			Path:    path,
+			SubKeys: subKeys,
 		}, nil
 	})
 

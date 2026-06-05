@@ -106,18 +106,89 @@ func (m *Manager) logPath(key string) string {
 	return filepath.Join(m.logDir, sanitized+".log")
 }
 
-// LogPath returns the log file path for a key (exported for IPC handler).
-func (m *Manager) LogPath(key string) string { return m.logPath(key) }
+// LogPath returns the log file path for a key.
+// For Mode B project names (no subprocess specified), returns "" because there
+// is no single file to tail — the caller should ask for a specific subprocess.
+func (m *Manager) LogPath(key string) string {
+	// Direct key: check if the log file exists
+	if _, hasLogger := m.loggers[key]; hasLogger {
+		return m.logPath(key)
+	}
+	// Mode B project name: no single path, return empty
+	prefix := key + "/"
+	for k := range m.loggers {
+		if strings.HasPrefix(k, prefix) {
+			return "" // multiple sub-loggers, can't return one path
+		}
+	}
+	return m.logPath(key)
+}
 
-// LogLines returns the last n lines from the in-memory ring buffer for key.
+// SubProcessKeys returns the list of known sub-process keys for a project.
+// Returns nil if the project is Mode A (has a direct logger) or unknown.
+func (m *Manager) SubProcessKeys(project string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := project + "/"
+	var keys []string
+	for k := range m.loggers {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// LogLines returns the last n lines for a key.
+// If key is a Mode B project name (no subprocess), aggregates from all
+// subprocesses, prefixing each line with "[processname] ".
 func (m *Manager) LogLines(key string, n int) []string {
 	m.mu.Lock()
-	logger, ok := m.loggers[key]
+	logger, directOK := m.loggers[key]
 	m.mu.Unlock()
-	if !ok {
+
+	if directOK {
+		return logger.TailLines(n)
+	}
+
+	// Mode B: aggregate from all sub-process loggers
+	prefix := key + "/"
+	m.mu.Lock()
+	type entry struct {
+		procName string
+		logger   *Logger
+	}
+	var subs []entry
+	for k, lg := range m.loggers {
+		if strings.HasPrefix(k, prefix) {
+			subs = append(subs, entry{strings.TrimPrefix(k, prefix), lg})
+		}
+	}
+	m.mu.Unlock()
+
+	if len(subs) == 0 {
 		return nil
 	}
-	return logger.TailLines(n)
+
+	// Sort for consistent ordering
+	sort.Slice(subs, func(i, j int) bool { return subs[i].procName < subs[j].procName })
+
+	perProc := n / len(subs)
+	if perProc < 20 {
+		perProc = 20
+	}
+
+	var all []string
+	for _, s := range subs {
+		for _, line := range s.logger.TailLines(perProc) {
+			all = append(all, "["+s.procName+"] "+line)
+		}
+	}
+	if len(all) > n {
+		all = all[len(all)-n:]
+	}
+	return all
 }
 
 // RecentErrors returns the most recent error events for key.

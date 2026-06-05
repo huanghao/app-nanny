@@ -45,7 +45,15 @@ var logsCmd = &cobra.Command{
 		}
 
 		if result.Path == "" {
-			return fmt.Errorf("no log file path returned by daemon")
+			// Mode B project with multiple processes — can't tail one file
+			if len(result.SubKeys) > 0 {
+				fmt.Fprintf(os.Stderr, "Cannot follow logs for the whole project. Specify a process:\n")
+				for _, k := range result.SubKeys {
+					fmt.Fprintf(os.Stderr, "  nanny logs %s -f\n", k)
+				}
+				return nil
+			}
+			return fmt.Errorf("no log file available (was this service started via nanny?)")
 		}
 		return tailFollow(result.Path)
 	},

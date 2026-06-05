@@ -82,8 +82,9 @@ type LogsParams struct {
 }
 
 type LogsResult struct {
-	Lines []string `json:"lines"`
-	Path  string   `json:"path"` // log file path for follow mode
+	Lines   []string `json:"lines"`
+	Path    string   `json:"path"`    // log file path for -f mode; empty = can't follow (multi-process)
+	SubKeys []string `json:"sub_keys"` // populated when Path is empty: the per-process keys to use
 }
 
 type ErrorsParams struct {
