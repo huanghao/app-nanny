@@ -114,3 +114,50 @@ func TestLoadProject_NotFound(t *testing.T) {
 		t.Error("expected error for missing file, got nil")
 	}
 }
+
+func TestLoadProject_DefaultMaxRestarts(t *testing.T) {
+	path := writeToml(t, `name = "x"`)
+	cfg, err := config.LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxRestarts != 5 {
+		t.Errorf("MaxRestarts = %d, want 5", cfg.MaxRestarts)
+	}
+}
+
+func TestLoadProject_DefaultRestart(t *testing.T) {
+	path := writeToml(t, `name = "x"`)
+	cfg, err := config.LoadProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Restart != "on-failure" {
+		t.Errorf("Restart = %q, want on-failure", cfg.Restart)
+	}
+}
+
+func TestLoadProject_IsModeB(t *testing.T) {
+	path := writeToml(t, `
+name = "svc"
+[processes.a]
+command = "echo a"
+port = 3000
+`)
+	cfg, _ := config.LoadProject(path)
+	if !cfg.IsModeB() {
+		t.Error("expected IsModeB=true with processes defined")
+	}
+}
+
+func TestLoadProject_IsModeBFalseForModeA(t *testing.T) {
+	path := writeToml(t, `
+name = "svc"
+[ports]
+PORT = 8080
+`)
+	cfg, _ := config.LoadProject(path)
+	if cfg.IsModeB() {
+		t.Error("expected IsModeB=false for Mode A config")
+	}
+}

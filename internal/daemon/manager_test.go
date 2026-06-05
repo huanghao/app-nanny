@@ -97,4 +97,53 @@ func TestManager_Remove(t *testing.T) {
 	}
 }
 
+func TestManager_Restart(t *testing.T) {
+	m, dir := setupManager(t)
+	projDir := writeProjectToml(t, dir, `
+name = "rsvc"
+command = "sleep 60"
+`)
+	_ = m.Add("rsvc", projDir)
+	_ = m.Start("rsvc", "")
+	defer m.Stop("rsvc", "")
+
+	if err := m.Restart("rsvc", ""); err != nil {
+		t.Fatalf("Restart error: %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	infos := m.PS()
+	found := false
+	for _, info := range infos {
+		if info.Project == "rsvc" && info.Status == "running" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("service should be running after restart")
+	}
+}
+
+func TestManager_StartUnknown(t *testing.T) {
+	m, _ := setupManager(t)
+	err := m.Start("ghost", "")
+	if err == nil {
+		t.Error("starting unknown project should return error")
+	}
+}
+
+func TestManager_RemoveWhileRunning(t *testing.T) {
+	m, dir := setupManager(t)
+	projDir := writeProjectToml(t, dir, `name = "blocker"
+command = "sleep 60"`)
+	_ = m.Add("blocker", projDir)
+	_ = m.Start("blocker", "")
+	defer m.Stop("blocker", "")
+
+	err := m.Remove("blocker")
+	if err == nil {
+		t.Error("removing a running project should return error")
+	}
+}
+
 var _ = time.Second // keep time import used

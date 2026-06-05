@@ -88,3 +88,24 @@ func TestProcess_EnvInjection(t *testing.T) {
 		t.Errorf("PORT = %q, want %q", got, "9999\n")
 	}
 }
+
+func TestProcess_StopIdempotent(t *testing.T) {
+	// Stopping an already-stopped process should not error
+	proc := daemon.NewProcess("idle", config.ProcessConfig{Command: "sleep 60"}, t.TempDir())
+	if err := proc.Stop(); err != nil {
+		t.Errorf("Stop on stopped process should return nil, got %v", err)
+	}
+}
+
+func TestProcess_StartAlreadyRunning(t *testing.T) {
+	proc := daemon.NewProcess("dup", config.ProcessConfig{Command: "sleep 60"}, t.TempDir())
+	if err := proc.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Stop()
+
+	err := proc.Start()
+	if err == nil {
+		t.Error("starting an already-running process should return error")
+	}
+}
