@@ -21,11 +21,16 @@
     a.port-link { color: #4ec9b0; text-decoration: none; }
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
     .port-dim { color: #484848; }
-    #log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 240px; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
-    #log-header { background: #252526; padding: 6px 12px; font-size: 12px; color: #858585; display: flex; justify-content: space-between; }
-    #log-body { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; line-height: 1.6; }
+
+    /* Log panel — height controlled by JS */
+    #log-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
+    #log-resize { height: 6px; cursor: row-resize; background: #2d2d2d; flex-shrink: 0; position: relative; }
+    #log-resize::after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 32px; height: 2px; border-radius: 1px; background: #555; }
+    #log-resize:hover, #log-resize:hover::after { background: #4ec9b0; }
+    #log-header { background: #252526; padding: 6px 12px; font-size: 12px; color: #858585; display: flex; justify-content: space-between; flex-shrink: 0; }
+    #log-body { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; line-height: 1.6; min-height: 0; }
     #log-body .err { color: #f48771; }
-    .main { padding-bottom: 260px; }
+    .main { /* padding-bottom set by JS */ }
   </style>
 </head>
 <body>
@@ -34,7 +39,7 @@
   <h1>nanny</h1>
   <span id="daemon-status" style="color:#858585;font-size:12px">loading...</span>
 </header>
-<div class="main">
+<div class="main" id="main">
   <table>
     <thead><tr>
       <th>PROJECT</th><th>PROCESS</th><th>STATUS</th><th>PID</th>
@@ -44,6 +49,7 @@
   </table>
 </div>
 <div id="log-panel">
+  <div id="log-resize"></div>
   <div id="log-header">
     <span id="log-title">logs — select a service</span>
     <span><button class="btn" onclick="clearLog()">clear</button></span>
@@ -53,6 +59,58 @@
 <script>
 let eventSource = null;
 
+// ── Log panel resize ─────────────────────────────────────────────────────────
+const LS_KEY = 'nanny-log-height';
+const DEFAULT_HEIGHT = 380;
+const MIN_HEIGHT = 80;
+const MAX_HEIGHT = () => Math.floor(window.innerHeight * 0.85);
+
+function applyLogHeight(h) {
+  h = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT(), h));
+  document.getElementById('log-panel').style.height = h + 'px';
+  document.getElementById('main').style.paddingBottom = (h + 8) + 'px';
+  return h;
+}
+
+function initLogHeight() {
+  const saved = parseInt(localStorage.getItem(LS_KEY), 10);
+  applyLogHeight(saved > 0 ? saved : DEFAULT_HEIGHT);
+}
+
+(function setupResize() {
+  const handle = document.getElementById('log-resize');
+  let dragging = false, startY = 0, startH = 0;
+
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startY = e.clientY;
+    startH = document.getElementById('log-panel').offsetHeight;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    // Drag handle is at the top of the panel — dragging up increases height
+    const newH = applyLogHeight(startH + (startY - e.clientY));
+    document.getElementById('log-panel').style.height = newH + 'px';
+    document.getElementById('main').style.paddingBottom = (newH + 8) + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const h = document.getElementById('log-panel').offsetHeight;
+    localStorage.setItem(LS_KEY, h);
+  });
+})();
+
+initLogHeight();
+
+// ── Ports cell ───────────────────────────────────────────────────────────────
 function portsHTML(p) {
   const actual = p.actual_ports || [];
   const declared = p.declared_port || 0;
@@ -78,24 +136,17 @@ function actionsHTML(key) {
        + `<button class="btn" onclick="streamLogs('${key}')" title="logs">logs</button>`;
 }
 
-// Update a td's text only when it actually changed (avoids unnecessary repaints)
-function setText(td, text) {
-  if (td.textContent !== String(text)) td.textContent = text;
-}
-function setHTML(td, html) {
-  if (td.innerHTML !== html) td.innerHTML = html;
-}
-function setClass(td, cls) {
-  if (td.className !== cls) td.className = cls;
-}
+function setText(td, text) { if (td.textContent !== String(text)) td.textContent = text; }
+function setHTML(td, html)  { if (td.innerHTML !== html) td.innerHTML = html; }
+function setClass(td, cls)  { if (td.className !== cls) td.className = cls; }
 
+// ── Process table ────────────────────────────────────────────────────────────
 async function loadPS() {
   try {
     const r = await fetch('/api/ps');
     const data = await r.json();
     const processes = data.processes || [];
 
-    // Backend already sorts, but sort again defensively
     processes.sort((a, b) => {
       const ka = a.project + '\0' + (a.process || '');
       const kb = b.project + '\0' + (b.process || '');
@@ -103,27 +154,21 @@ async function loadPS() {
     });
 
     const tbody = document.getElementById('proc-body');
-
-    // Build map of existing rows by key
     const rowMap = new Map();
-    for (const tr of tbody.querySelectorAll('tr[data-key]')) {
-      rowMap.set(tr.dataset.key, tr);
-    }
+    for (const tr of tbody.querySelectorAll('tr[data-key]')) rowMap.set(tr.dataset.key, tr);
 
-    // Update or create rows, keep them in sorted order
     processes.forEach((p, i) => {
       const key = p.process ? `${p.project}/${p.process}` : p.project;
       const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
 
       let tr = rowMap.get(key);
       if (!tr) {
-        // New row — create once
         tr = document.createElement('tr');
         tr.dataset.key = key;
         for (let c = 0; c < 8; c++) tr.appendChild(document.createElement('td'));
         tr.querySelectorAll('td')[7].innerHTML = actionsHTML(key);
       }
-      rowMap.delete(key); // mark visited
+      rowMap.delete(key);
 
       const cells = tr.querySelectorAll('td');
       setText(cells[0], p.project);
@@ -134,14 +179,11 @@ async function loadPS() {
       setText(cells[4], p.uptime || '—');
       setText(cells[5], mem);
       setHTML(cells[6], portsHTML(p));
-      // actions column never changes, skip
 
-      // Ensure row is at position i in tbody
       const sibling = tbody.children[i];
       if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
     });
 
-    // Remove rows for services no longer present
     for (const tr of rowMap.values()) tr.remove();
 
     document.getElementById('daemon-status').textContent = 'daemon: running';
