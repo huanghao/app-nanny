@@ -165,10 +165,10 @@ function portsHTML(p) {
 }
 
 function actionsHTML(key) {
-  const s = `onclick="event.stopPropagation()"`;
-  return `<button class="btn" ${s} onclick="doAction('${key}','start');event.stopPropagation()" title="start">&#9654;</button>`
-       + `<button class="btn" ${s} onclick="doAction('${key}','stop');event.stopPropagation()" title="stop">&#9632;</button>`
-       + `<button class="btn" ${s} onclick="doAction('${key}','restart');event.stopPropagation()" title="restart">&#8634;</button>`;
+  const k = key;
+  return `<button class="btn" onclick="doAction('${k}','start');event.stopPropagation()" title="start">&#9654;</button>`
+       + `<button class="btn" onclick="doAction('${k}','stop');event.stopPropagation()" title="stop">&#9632;</button>`
+       + `<button class="btn" onclick="doAction('${k}','restart');event.stopPropagation()" title="restart">&#8634;</button>`;
 }
 
 function setText(td, text) { if (td.textContent !== String(text)) td.textContent = text; }
