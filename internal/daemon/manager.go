@@ -551,8 +551,10 @@ func ActualPorts(pid, pgid int) []int {
 		}
 	}
 
-	// lsof -a: AND conditions so -p and -i both apply
-	out, err := exec.Command("lsof", "-a", "-p", pidList, "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
+	// lsof flags:
+	//   -a    AND conditions (-p and -i both apply, not OR)
+	//   -P    do NOT convert port numbers to service names (e.g. show 3011 not "trusted-web")
+	out, err := exec.Command("lsof", "-a", "-P", "-p", pidList, "-iTCP", "-sTCP:LISTEN", "-Fn").Output()
 	if err != nil {
 		return nil
 	}
