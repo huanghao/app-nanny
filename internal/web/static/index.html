@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>nanny</title>
+  <style>
+    body { font-family: monospace; background: #1a1a1a; color: #d4d4d4; margin: 0; padding: 0; }
+    header { background: #252526; padding: 12px 20px; border-bottom: 1px solid #3c3c3c; display: flex; align-items: center; gap: 12px; }
+    header h1 { margin: 0; font-size: 16px; color: #9cdcfe; }
+    #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; display: inline-block; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 12px; background: #252526; color: #858585; font-weight: normal; border-bottom: 1px solid #3c3c3c; }
+    td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; }
+    tr:hover td { background: #2a2a2a; }
+    .running { color: #4ec9b0; }
+    .stopped { color: #858585; }
+    .crashed { color: #f48771; }
+    .btn { background: #3c3c3c; border: none; color: #d4d4d4; padding: 3px 10px; cursor: pointer; border-radius: 3px; font-family: monospace; font-size: 12px; margin: 0 2px; }
+    .btn:hover { background: #505050; }
+    #log-panel { position: fixed; bottom: 0; left: 0; right: 0; height: 240px; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; flex-direction: column; }
+    #log-header { background: #252526; padding: 6px 12px; font-size: 12px; color: #858585; display: flex; justify-content: space-between; }
+    #log-body { flex: 1; overflow-y: auto; padding: 8px 12px; font-size: 12px; line-height: 1.6; }
+    #log-body .err { color: #f48771; }
+    .main { padding-bottom: 260px; }
+  </style>
+</head>
+<body>
+<header>
+  <span id="status-dot"></span>
+  <h1>nanny</h1>
+  <span id="daemon-status" style="color:#858585;font-size:12px">loading...</span>
+</header>
+<div class="main">
+  <table id="proc-table">
+    <thead><tr>
+      <th>PROJECT</th><th>PROCESS</th><th>STATUS</th><th>PID</th>
+      <th>UPTIME</th><th>MEM</th><th>PORTS</th><th>ACTIONS</th>
+    </tr></thead>
+    <tbody id="proc-body"></tbody>
+  </table>
+</div>
+<div id="log-panel">
+  <div id="log-header">
+    <span id="log-title">logs — select a service</span>
+    <span><button class="btn" onclick="clearLog()">clear</button></span>
+  </div>
+  <div id="log-body"></div>
+</div>
+<script>
+let eventSource = null;
+
+async function loadPS() {
+  try {
+    const r = await fetch('/api/ps');
+    const data = await r.json();
+    const tbody = document.getElementById('proc-body');
+    tbody.innerHTML = '';
+    (data.processes || []).forEach(p => {
+      const key = p.process ? p.project + '/' + p.process : p.project;
+      const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '-';
+      const ports = (p.actual_ports || []).join(',') || '-';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${p.project}</td>
+        <td>${p.process || '-'}</td>
+        <td class="${p.status}">${p.status}</td>
+        <td>${p.pid || '-'}</td>
+        <td>${p.uptime || '-'}</td>
+        <td>${mem}</td>
+        <td>${ports}</td>
+        <td>
+          <button class="btn" onclick="action('${key}','start')">&#9654;</button>
+          <button class="btn" onclick="action('${key}','stop')">&#9632;</button>
+          <button class="btn" onclick="action('${key}','restart')">&#8634;</button>
+          <button class="btn" onclick="streamLogs('${key}')">logs</button>
+        </td>`;
+      tbody.appendChild(tr);
+    });
+    document.getElementById('daemon-status').textContent = 'daemon: running';
+    document.getElementById('status-dot').style.background = '#4ec9b0';
+  } catch(e) {
+    document.getElementById('daemon-status').textContent = 'daemon: error';
+    document.getElementById('status-dot').style.background = '#f48771';
+  }
+}
+
+async function action(key, act) {
+  const parts = key.split('/');
+  const url = parts.length === 2
+    ? `/api/${parts[0]}/${parts[1]}/${act}`
+    : `/api/${key}/${act}`;
+  await fetch(url, { method: 'POST' });
+  setTimeout(loadPS, 500);
+}
+
+function streamLogs(key) {
+  if (eventSource) eventSource.close();
+  document.getElementById('log-title').textContent = 'logs — ' + key;
+  const logBody = document.getElementById('log-body');
+  logBody.innerHTML = '';
+  const sseKey = key.replace('/', '-');
+  eventSource = new EventSource('/api/logs/' + sseKey + '/stream');
+  eventSource.onmessage = e => {
+    const line = document.createElement('div');
+    const isErr = /\b5\d{2}\b|Error:|panic:|FATAL/i.test(e.data);
+    if (isErr) line.className = 'err';
+    line.textContent = e.data;
+    logBody.appendChild(line);
+    logBody.scrollTop = logBody.scrollHeight;
+  };
+}
+
+function clearLog() {
+  document.getElementById('log-body').innerHTML = '';
+}
+
+loadPS();
+setInterval(loadPS, 3000);
+</script>
+</body>
+</html>

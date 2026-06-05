@@ -79,6 +79,8 @@ func NewMux(mgr ManagerIface) *http.ServeMux {
 		http.NotFound(w, r)
 	})
 
+	mux.Handle("/static/", StaticHandler())
+
 	return mux
 }
 
