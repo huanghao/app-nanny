@@ -13,6 +13,7 @@ import (
 
 	"github.com/huanghao/app-nanny/internal/config"
 	"github.com/huanghao/app-nanny/internal/ipc"
+	"github.com/huanghao/app-nanny/internal/web"
 )
 
 // Run is the daemon entry point. It blocks until SIGTERM or SIGINT.
@@ -68,6 +69,16 @@ func Run(socketPath, dataDir string) error {
 	registerHandlers(srv, mgr, sigCh)
 
 	go srv.Serve(ln)
+
+	// Start web console HTTP server on :7070
+	webMux := web.NewMux(mgr)
+	web.RegisterSSERoute(webMux, mgr)
+	webSrv := web.NewServer(":7070", webMux)
+	go func() {
+		if err := webSrv.Start(); err != nil {
+			log.Printf("web: server error: %v", err)
+		}
+	}()
 
 	<-sigCh
 	log.Println("daemon: shutting down")
