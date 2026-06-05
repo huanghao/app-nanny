@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/huanghao/app-nanny/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -30,4 +31,13 @@ func SocketPath() string {
 func DataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "app-nanny")
+}
+
+// readNameFromToml reads the project name from an app-nanny.toml.
+func readNameFromToml(path string) (string, error) {
+	cfg, err := config.LoadProject(path)
+	if err != nil {
+		return "", err
+	}
+	return cfg.Name, nil
 }
