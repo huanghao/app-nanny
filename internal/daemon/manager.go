@@ -331,8 +331,13 @@ func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string)
 
 	proc := NewProcess(name, config.ProcessConfig{Command: cfg.Command}, dir)
 	if err := os.MkdirAll(m.logDir, 0755); err == nil {
-		if rf, err := NewRotatingFile(m.logPath(name), 50*1024*1024, 3); err == nil {
+		logPath := m.logPath(name)
+		needSep := fileHasContent(logPath)
+		if rf, err := NewRotatingFile(logPath, 50*1024*1024, 3); err == nil {
 			lg := NewLogger(rf, m.errRing, name, cfg.ErrorPatterns)
+			if needSep {
+				lg.WriteSeparator(time.Now())
+			}
 			proc.SetStdio(lg)
 			m.mu.Lock()
 			m.loggers[name] = lg
@@ -384,8 +389,13 @@ func (m *Manager) startModeB(projectName, processName string, cfg *config.Projec
 		}
 		proc := NewProcess(key, pCfg, workDir)
 		if err := os.MkdirAll(m.logDir, 0755); err == nil {
-			if rf, err := NewRotatingFile(m.logPath(key), 50*1024*1024, 3); err == nil {
+			logPath := m.logPath(key)
+			needSep := fileHasContent(logPath)
+			if rf, err := NewRotatingFile(logPath, 50*1024*1024, 3); err == nil {
 				lg := NewLogger(rf, m.errRing, key, cfg.ErrorPatterns)
+				if needSep {
+					lg.WriteSeparator(time.Now())
+				}
 				proc.SetStdio(lg)
 				m.mu.Lock()
 				m.loggers[key] = lg
@@ -589,6 +599,12 @@ func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) err
 func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
 	parts := strings.SplitN(key, "/", 2)
 	return m.configs[parts[0]]
+}
+
+// fileHasContent reports whether the file at path exists and has non-zero size.
+func fileHasContent(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Size() > 0
 }
 
 // lastLogTimeStrLocked returns the RFC3339 timestamp of the last log line for a key.

@@ -40,6 +40,21 @@ func (l *Logger) LastLineTime() time.Time {
 	return l.lastLineTime
 }
 
+// WriteSeparator inserts a restart divider line directly into the file and ring buffer,
+// without nanny's timestamp prefix so the frontend can detect and style it.
+func (l *Logger) WriteSeparator(t time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	line := fmt.Sprintf("────────── restarted at %s ──────────", t.Format("15:04:05"))
+	fmt.Fprintln(l.out, line)
+	l.ring[l.ringPos] = line
+	l.ringPos = (l.ringPos + 1) % ringCap
+	if l.ringLen < ringCap {
+		l.ringLen++
+	}
+	l.lastLineTime = t
+}
+
 // NewLogger creates a Logger that writes to out.
 func NewLogger(out io.WriteCloser, errRing *ErrorRing, key string, patterns []config.ErrorPattern) *Logger {
 	return &Logger{out: out, errRing: errRing, key: key, patterns: patterns}
