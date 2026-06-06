@@ -482,6 +482,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			WorkDir:       proc.WorkDir(),
 			ErrorCount:    errCount,
 			LastErrorTime: lastErrTime,
+			LastLogTime:   m.lastLogTimeStrLocked(key),
 		})
 	}
 
@@ -588,6 +589,21 @@ func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) err
 func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
 	parts := strings.SplitN(key, "/", 2)
 	return m.configs[parts[0]]
+}
+
+// lastLogTimeStrLocked returns the RFC3339 timestamp of the last log line for a key.
+// Must be called with m.mu held.
+func (m *Manager) lastLogTimeStrLocked(key string) string {
+	if logger, ok := m.loggers[key]; ok {
+		if t := logger.LastLineTime(); !t.IsZero() {
+			return t.Format(time.RFC3339)
+		}
+	}
+	// Adopted process or no lines yet — try log file mtime (outside lock is fine for stat)
+	if info, err := os.Stat(m.logPath(key)); err == nil && info.Size() > 0 {
+		return info.ModTime().Format(time.RFC3339)
+	}
+	return ""
 }
 
 // declaredPortForKey returns the configured port for a process key.

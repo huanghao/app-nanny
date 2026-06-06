@@ -65,6 +65,7 @@ type ProcessInfo struct {
 	WorkDir       string  `json:"work_dir"`
 	ErrorCount    int     `json:"error_count"`
 	LastErrorTime string  `json:"last_error_time"` // RFC3339, empty if no errors
+	LastLogTime   string  `json:"last_log_time"`   // RFC3339, time of last log line
 }
 
 type PSResult struct {

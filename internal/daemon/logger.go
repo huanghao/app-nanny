@@ -29,6 +29,15 @@ type Logger struct {
 	ring    [ringCap]string
 	ringPos int
 	ringLen int
+
+	lastLineTime time.Time // time of the most recently written log line
+}
+
+// LastLineTime returns when the most recent log line was written.
+func (l *Logger) LastLineTime() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastLineTime
 }
 
 // NewLogger creates a Logger that writes to out.
@@ -60,8 +69,9 @@ func (l *Logger) Write(p []byte) (int, error) {
 }
 
 func (l *Logger) processLineLocked(line string) {
-	ts := time.Now().Format("15:04:05")
-	fmt.Fprintf(l.out, "%s %s\n", ts, line)
+	now := time.Now()
+	l.lastLineTime = now
+	fmt.Fprintf(l.out, "%s %s\n", now.Format("15:04:05"), line)
 
 	// Add to ring
 	l.ring[l.ringPos] = line

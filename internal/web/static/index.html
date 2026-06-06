@@ -51,7 +51,7 @@
   <table>
     <thead><tr>
       <th>PROJECT</th><th>PROCESS</th><th>PORTS</th><th>STATUS</th>
-      <th>PID</th><th>UPTIME</th><th>MEM</th><th>ACTIONS</th>
+      <th>PID</th><th>UPTIME</th><th>MEM</th><th>LAST</th><th>ACTIONS</th>
     </tr></thead>
     <tbody id="proc-body"></tbody>
   </table>
@@ -137,6 +137,16 @@ async function loadVersion() {
 loadVersion();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+function relTime(iso) {
+  if (!iso) return '—';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 5)    return 'now';
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  if (s < 86400) return Math.floor(s / 3600) + 'h';
+  return Math.floor(s / 86400) + 'd';
+}
+
 function shortenPath(p) {
   // Replace home directory prefix with ~
   const home = location.hostname === 'localhost' ? null : null; // can't know home in browser
@@ -201,10 +211,9 @@ async function loadPS() {
       if (!tr) {
         tr = document.createElement('tr');
         tr.dataset.key = key;
-        // 8 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | ACTIONS
-        for (let c = 0; c < 8; c++) tr.appendChild(document.createElement('td'));
-        tr.querySelectorAll('td')[7].innerHTML = actionsHTML(key);
-        // Row click → show logs
+        // 9 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | LAST | ACTIONS
+        for (let c = 0; c < 9; c++) tr.appendChild(document.createElement('td'));
+        tr.querySelectorAll('td')[8].innerHTML = actionsHTML(key);
         tr.addEventListener('click', () => streamLogs(key));
       }
       rowMap.delete(key);
@@ -234,7 +243,8 @@ async function loadPS() {
       setText(cells[4], p.pid || '—');
       setText(cells[5], p.uptime || '—');
       setText(cells[6], mem);
-      // actions[7] set once at row creation
+      setText(cells[7], relTime(p.last_log_time));
+      // actions[8] set once at row creation
 
       const sibling = tbody.children[i];
       if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
