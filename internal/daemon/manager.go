@@ -22,7 +22,8 @@ type Manager struct {
 	runtime   *Runtime
 	processes map[string]*Process
 	configs    map[string]*config.ProjectConfig
-	activeToml map[string]string // raw toml content used at last Start()
+	activeToml     map[string]string    // raw toml content used at last Start()
+	activeTomlTime map[string]time.Time // when that toml was loaded
 	logDir     string
 	loggers    map[string]*Logger
 	errRing    *ErrorRing
@@ -35,7 +36,8 @@ func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
 		runtime:    rt,
 		processes:  make(map[string]*Process),
 		configs:    make(map[string]*config.ProjectConfig),
-		activeToml: make(map[string]string),
+		activeToml:     make(map[string]string),
+		activeTomlTime: make(map[string]time.Time),
 		logDir:     logDir,
 		loggers:    make(map[string]*Logger),
 		errRing:    NewErrorRing(),
@@ -306,12 +308,14 @@ func (m *Manager) Start(projectName, processName string) error {
 	if err != nil {
 		return err
 	}
-	// Store raw toml so we can later compare against disk version
+	// Store raw toml and load time so we can compare against disk version later
 	rawBytes, _ := os.ReadFile(tomlPath)
+	loadedAt := time.Now()
 
 	m.mu.Lock()
 	m.configs[projectName] = cfg
 	m.activeToml[projectName] = string(rawBytes)
+	m.activeTomlTime[projectName] = loadedAt
 	m.mu.Unlock()
 
 	if cfg.IsModeB() {
@@ -622,12 +626,27 @@ func (m *Manager) ProjectToml(name string) (string, error) {
 	return string(data), nil
 }
 
-// ProjectTomlActive returns the toml content that was used when the service was last started.
-// Returns empty string if the service has never been started by this daemon instance.
-func (m *Manager) ProjectTomlActive(name string) string {
+// ProjectTomlActive returns the toml content and load time from the last Start().
+// Content is empty if the service has never been started by this daemon instance.
+func (m *Manager) ProjectTomlActive(name string) (content string, loadedAt time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.activeToml[name]
+	return m.activeToml[name], m.activeTomlTime[name]
+}
+
+// ProjectTomlDiskMtime returns the last-modified time of the on-disk toml file.
+func (m *Manager) ProjectTomlDiskMtime(name string) time.Time {
+	m.mu.Lock()
+	dir, found := m.registry.Get(name)
+	m.mu.Unlock()
+	if !found {
+		return time.Time{}
+	}
+	info, err := os.Stat(filepath.Join(dir, "app-nanny.toml"))
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 // fileHasContent reports whether the file at path exists and has non-zero size.

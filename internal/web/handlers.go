@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/huanghao/app-nanny/internal/ipc"
 )
@@ -17,7 +18,8 @@ type ManagerIface interface {
 	Restart(projectName, processName string) error
 	LogLines(key string, n int) []string
 	ProjectToml(name string) (string, error)
-	ProjectTomlActive(name string) string
+	ProjectTomlActive(name string) (content string, loadedAt time.Time)
+	ProjectTomlDiskMtime(name string) time.Time
 }
 
 // NewMux returns an http.ServeMux with all web console API routes registered.
@@ -49,12 +51,21 @@ func NewMux(mgr ManagerIface) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		active := mgr.ProjectTomlActive(name)
+		active, loadedAt := mgr.ProjectTomlActive(name)
+		diskMtime := mgr.ProjectTomlDiskMtime(name)
 		stale := active != "" && active != disk
+		fmtTime := func(t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
+			return t.Format("01-02 15:04:05")
+		}
 		writeJSON(w, map[string]any{
-			"disk":   disk,
-			"active": active,
-			"stale":  stale,
+			"disk":        disk,
+			"active":      active,
+			"stale":       stale,
+			"loaded_at":   fmtTime(loadedAt),
+			"disk_mtime":  fmtTime(diskMtime),
 		})
 	})
 

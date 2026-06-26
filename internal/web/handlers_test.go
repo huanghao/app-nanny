@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huanghao/app-nanny/internal/ipc"
 	"github.com/huanghao/app-nanny/internal/web"
@@ -28,7 +29,8 @@ func (s *stubManager) LogLines(key string, n int) []string    { return []string{
 func (s *stubManager) ProjectToml(name string) (string, error) {
 	return `name = "` + name + `"` + "\n" + `command = "just dev"` + "\n", nil
 }
-func (s *stubManager) ProjectTomlActive(name string) string { return "" }
+func (s *stubManager) ProjectTomlActive(name string) (string, time.Time) { return "", time.Time{} }
+func (s *stubManager) ProjectTomlDiskMtime(name string) time.Time        { return time.Time{} }
 
 func TestHandlePS(t *testing.T) {
 	stub := &stubManager{psResult: []ipc.ProcessInfo{
