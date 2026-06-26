@@ -24,7 +24,10 @@ func (s *stubManager) PS() []ipc.ProcessInfo               { return s.psResult }
 func (s *stubManager) Start(n, p string) error             { return s.startErr }
 func (s *stubManager) Stop(n, p string) error              { return s.stopErr }
 func (s *stubManager) Restart(n, p string) error           { return s.restartErr }
-func (s *stubManager) LogLines(key string, n int) []string { return []string{"line1", "line2"} }
+func (s *stubManager) LogLines(key string, n int) []string    { return []string{"line1", "line2"} }
+func (s *stubManager) ProjectToml(name string) (string, error) {
+	return `name = "` + name + `"\ncommand = "just dev"\n`, nil
+}
 
 func TestHandlePS(t *testing.T) {
 	stub := &stubManager{psResult: []ipc.ProcessInfo{

@@ -3,6 +3,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -16,6 +17,7 @@ type ManagerIface interface {
 	Stop(projectName, processName string) error
 	Restart(projectName, processName string) error
 	LogLines(key string, n int) []string
+	ProjectToml(name string) (string, error)
 }
 
 // NewMux returns an http.ServeMux with all web console API routes registered.
@@ -29,6 +31,22 @@ func NewMux(mgr ManagerIface) *http.ServeMux {
 			return
 		}
 		writeJSON(w, ipc.PSResult{Processes: mgr.PS()})
+	})
+
+	// GET /api/config/:name — return raw app-nanny.toml for a project
+	mux.HandleFunc("/api/config/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/api/config/")
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		content, err := mgr.ProjectToml(name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, content)
 	})
 
 	// POST /api/<name>/action  or  POST /api/<name>/<process>/action

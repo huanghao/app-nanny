@@ -601,6 +601,21 @@ func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
 	return m.configs[parts[0]]
 }
 
+// ProjectToml returns the raw contents of a project's app-nanny.toml.
+func (m *Manager) ProjectToml(name string) (string, error) {
+	m.mu.Lock()
+	dir, found := m.registry.Get(name)
+	m.mu.Unlock()
+	if !found {
+		return "", fmt.Errorf("project %q not registered", name)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "app-nanny.toml"))
+	if err != nil {
+		return "", fmt.Errorf("read toml: %w", err)
+	}
+	return string(data), nil
+}
+
 // fileHasContent reports whether the file at path exists and has non-zero size.
 func fileHasContent(path string) bool {
 	info, err := os.Stat(path)
