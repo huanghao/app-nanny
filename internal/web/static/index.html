@@ -201,7 +201,7 @@ function actionsHTML(key) {
   return `<button class="btn" onclick="doAction('${key}','start');event.stopPropagation()" title="start">&#9654;</button>`
        + `<button class="btn" onclick="doAction('${key}','stop');event.stopPropagation()" title="stop">&#9632;</button>`
        + `<button class="btn" onclick="doAction('${key}','restart');event.stopPropagation()" title="restart">&#8634;</button>`
-       + `<button class="btn" onclick="showCfg('${project}');event.stopPropagation()" title="view app-nanny.toml">cfg</button>`;
+       + `<button class="btn" onclick="showCfg('${project}');event.stopPropagation()" title="view app-nanny.toml">&#9881;</button>`;
 }
 
 let cfgData = null;
