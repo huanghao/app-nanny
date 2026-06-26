@@ -45,6 +45,8 @@
     #cfg-title { padding: 12px 16px; font-size: 13px; color: #9cdcfe; border-bottom: 1px solid #3c3c3c; display: flex; justify-content: space-between; align-items: center; }
     #cfg-title button { background: none; border: none; color: #858585; font-size: 16px; cursor: pointer; padding: 0 4px; }
     #cfg-title button:hover { color: #d4d4d4; }
+    #cfg-stale-banner { background: #3a2a00; color: #f0c040; font-size: 11px; padding: 6px 16px; display: flex; justify-content: space-between; align-items: center; }
+    #cfg-stale-banner button { background: #555; border: none; color: #d4d4d4; font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer; }
     #cfg-pre { flex: 1; overflow-y: auto; margin: 0; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; white-space: pre; color: #d4d4d4; background: #1a1a1a; border-radius: 0 0 6px 6px; }
     .main { /* padding-bottom set by JS */ }
   </style>
@@ -70,6 +72,10 @@
     <div id="cfg-title">
       <span id="cfg-name"></span>
       <button onclick="closeCfg()" title="close">✕</button>
+    </div>
+    <div id="cfg-stale-banner" style="display:none">
+      <span>⚠ 磁盘文件已变更，运行中的配置和磁盘不一致。nanny restart 后生效。</span>
+      <button id="cfg-toggle" onclick="toggleCfgView()">查看磁盘版本</button>
     </div>
     <pre id="cfg-pre"></pre>
   </div>
@@ -200,16 +206,50 @@ function actionsHTML(key) {
        + `<button class="btn" onclick="showCfg('${project}');event.stopPropagation()" title="view app-nanny.toml">cfg</button>`;
 }
 
+let cfgData = null;      // {disk, active, stale}
+let cfgShowingDisk = false;
+
 async function showCfg(project) {
   const r = await fetch('/api/config/' + project);
-  const text = await r.text();
+  cfgData = await r.json();
+  cfgShowingDisk = false;
+
   document.getElementById('cfg-name').textContent = project + '  —  app-nanny.toml';
-  document.getElementById('cfg-pre').textContent = text;
+  // Show active config (what's actually running), fall back to disk if never started
+  const content = cfgData.active || cfgData.disk;
+  const label = cfgData.active ? '运行中的配置' : 'app-nanny.toml';
+  document.getElementById('cfg-name').textContent = project + '  —  ' + label;
+  document.getElementById('cfg-pre').textContent = content;
+
+  const banner = document.getElementById('cfg-stale-banner');
+  const toggle = document.getElementById('cfg-toggle');
+  if (cfgData.stale) {
+    banner.style.display = 'flex';
+    toggle.textContent = '查看磁盘版本';
+  } else {
+    banner.style.display = 'none';
+  }
   document.getElementById('cfg-modal').classList.add('open');
+}
+
+function toggleCfgView() {
+  if (!cfgData) return;
+  cfgShowingDisk = !cfgShowingDisk;
+  const project = document.getElementById('cfg-name').textContent.split('  —  ')[0];
+  if (cfgShowingDisk) {
+    document.getElementById('cfg-name').textContent = project + '  —  磁盘版本（未生效）';
+    document.getElementById('cfg-pre').textContent = cfgData.disk;
+    document.getElementById('cfg-toggle').textContent = '查看运行中的配置';
+  } else {
+    document.getElementById('cfg-name').textContent = project + '  —  运行中的配置';
+    document.getElementById('cfg-pre').textContent = cfgData.active;
+    document.getElementById('cfg-toggle').textContent = '查看磁盘版本';
+  }
 }
 
 function closeCfg() {
   document.getElementById('cfg-modal').classList.remove('open');
+  cfgData = null;
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCfg(); });

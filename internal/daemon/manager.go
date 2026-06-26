@@ -21,23 +21,25 @@ type Manager struct {
 	registry  *config.Registry
 	runtime   *Runtime
 	processes map[string]*Process
-	configs   map[string]*config.ProjectConfig
-	logDir    string
-	loggers   map[string]*Logger
-	errRing   *ErrorRing
-	metrics   *Metrics
+	configs    map[string]*config.ProjectConfig
+	activeToml map[string]string // raw toml content used at last Start()
+	logDir     string
+	loggers    map[string]*Logger
+	errRing    *ErrorRing
+	metrics    *Metrics
 }
 
 func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
 	m := &Manager{
-		registry:  reg,
-		runtime:   rt,
-		processes: make(map[string]*Process),
-		configs:   make(map[string]*config.ProjectConfig),
-		logDir:    logDir,
-		loggers:   make(map[string]*Logger),
-		errRing:   NewErrorRing(),
-		metrics:   NewMetrics(),
+		registry:   reg,
+		runtime:    rt,
+		processes:  make(map[string]*Process),
+		configs:    make(map[string]*config.ProjectConfig),
+		activeToml: make(map[string]string),
+		logDir:     logDir,
+		loggers:    make(map[string]*Logger),
+		errRing:    NewErrorRing(),
+		metrics:    NewMetrics(),
 	}
 	m.startMetricsLoop()
 	return m
@@ -299,13 +301,17 @@ func (m *Manager) Start(projectName, processName string) error {
 	}
 
 	// Always re-read the toml so edits take effect on next start/restart
-	cfg, err := config.LoadProject(filepath.Join(dir, "app-nanny.toml"))
+	tomlPath := filepath.Join(dir, "app-nanny.toml")
+	cfg, err := config.LoadProject(tomlPath)
 	if err != nil {
 		return err
 	}
+	// Store raw toml so we can later compare against disk version
+	rawBytes, _ := os.ReadFile(tomlPath)
 
 	m.mu.Lock()
 	m.configs[projectName] = cfg
+	m.activeToml[projectName] = string(rawBytes)
 	m.mu.Unlock()
 
 	if cfg.IsModeB() {
@@ -601,7 +607,7 @@ func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
 	return m.configs[parts[0]]
 }
 
-// ProjectToml returns the raw contents of a project's app-nanny.toml.
+// ProjectToml returns the current on-disk contents of a project's app-nanny.toml.
 func (m *Manager) ProjectToml(name string) (string, error) {
 	m.mu.Lock()
 	dir, found := m.registry.Get(name)
@@ -614,6 +620,14 @@ func (m *Manager) ProjectToml(name string) (string, error) {
 		return "", fmt.Errorf("read toml: %w", err)
 	}
 	return string(data), nil
+}
+
+// ProjectTomlActive returns the toml content that was used when the service was last started.
+// Returns empty string if the service has never been started by this daemon instance.
+func (m *Manager) ProjectTomlActive(name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeToml[name]
 }
 
 // fileHasContent reports whether the file at path exists and has non-zero size.

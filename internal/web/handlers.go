@@ -3,7 +3,6 @@ package web
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -18,6 +17,7 @@ type ManagerIface interface {
 	Restart(projectName, processName string) error
 	LogLines(key string, n int) []string
 	ProjectToml(name string) (string, error)
+	ProjectTomlActive(name string) string
 }
 
 // NewMux returns an http.ServeMux with all web console API routes registered.
@@ -33,20 +33,29 @@ func NewMux(mgr ManagerIface) *http.ServeMux {
 		writeJSON(w, ipc.PSResult{Processes: mgr.PS()})
 	})
 
-	// GET /api/config/:name — return raw app-nanny.toml for a project
+	// GET /api/config/:name — return toml info for a project
+	// Response: {"disk":"...","active":"...","stale":bool}
+	// disk   = current file on disk
+	// active = what was loaded at last Start() — empty if never started
+	// stale  = disk != active (restart needed to apply changes)
 	mux.HandleFunc("/api/config/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/api/config/")
 		if name == "" {
 			http.Error(w, "missing name", http.StatusBadRequest)
 			return
 		}
-		content, err := mgr.ProjectToml(name)
+		disk, err := mgr.ProjectToml(name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprint(w, content)
+		active := mgr.ProjectTomlActive(name)
+		stale := active != "" && active != disk
+		writeJSON(w, map[string]any{
+			"disk":   disk,
+			"active": active,
+			"stale":  stale,
+		})
 	})
 
 	// POST /api/<name>/action  or  POST /api/<name>/<process>/action
