@@ -43,32 +43,7 @@ func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
 		errRing:    NewErrorRing(),
 		metrics:    NewMetrics(),
 	}
-	m.startMetricsLoop()
 	return m
-}
-
-func (m *Manager) startMetricsLoop() {
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			m.mu.Lock()
-			type kp struct {
-				key string
-				pid int
-			}
-			var running []kp
-			for key, proc := range m.processes {
-				if proc.Status() == StatusRunning {
-					running = append(running, kp{key, proc.PID()})
-				}
-			}
-			m.mu.Unlock()
-			for _, r := range running {
-				m.metrics.Update(r.key, r.pid)
-			}
-		}
-	}()
 }
 
 // AdoptProcess reconnects the Manager to a process that survived a daemon restart.
@@ -481,6 +456,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 		uptime := ""
 		if proc.Status() == StatusRunning {
 			uptime = formatDuration(time.Since(proc.StartedAt()))
+			m.metrics.Update(key, proc.PID())
 		}
 		snap := m.metrics.Get(key)
 		errs := m.errRing.RecentForKey(key, 50)
@@ -499,6 +475,7 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 			DeclaredPort:  m.declaredPortForKey(key),
 			ActualPorts:   ActualPorts(proc.PID(), proc.PGID()),
 			MemMB:         snap.MemMB,
+			CPUPercent:    snap.CPUPercent,
 			WorkDir:       proc.WorkDir(),
 			ErrorCount:    errCount,
 			LastErrorTime: lastErrTime,
@@ -740,12 +717,13 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 		if parts[0] != projectName {
 			continue
 		}
-		snap := m.metrics.Get(key)
-		errCount := len(m.errRing.RecentForKey(key, 50))
 		uptime := ""
 		if proc.Status() == StatusRunning {
 			uptime = formatDuration(time.Since(proc.StartedAt()))
+			m.metrics.Update(key, proc.PID())
 		}
+		snap := m.metrics.Get(key)
+		errCount := len(m.errRing.RecentForKey(key, 50))
 		statuses = append(statuses, ipc.ProcessStatus{
 			Key:         key,
 			Status:      string(proc.Status()),
@@ -753,6 +731,7 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 			Uptime:      uptime,
 			Restarts:    proc.Restarts(),
 			MemMB:       snap.MemMB,
+			CPUPercent:  snap.CPUPercent,
 			ActualPorts: ActualPorts(proc.PID(), proc.PGID()),
 			ErrorCount:  errCount,
 			LogPath:     m.logPath(key),

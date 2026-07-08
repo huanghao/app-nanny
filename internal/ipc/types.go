@@ -62,6 +62,7 @@ type ProcessInfo struct {
 	DeclaredPort int     `json:"declared_port"`
 	ActualPorts  []int   `json:"actual_ports"`
 	MemMB         float64 `json:"mem_mb"`
+	CPUPercent    float64 `json:"cpu_percent"`
 	WorkDir       string  `json:"work_dir"`
 	ErrorCount    int     `json:"error_count"`
 	LastErrorTime string  `json:"last_error_time"` // RFC3339, empty if no errors
@@ -121,6 +122,7 @@ type ProcessStatus struct {
 	Uptime      string  `json:"uptime"`
 	Restarts    int     `json:"restarts"`
 	MemMB       float64 `json:"mem_mb"`
+	CPUPercent  float64 `json:"cpu_percent"`
 	ActualPorts []int   `json:"actual_ports"`
 	ErrorCount  int     `json:"error_count"`
 	LogPath     string  `json:"log_path"`

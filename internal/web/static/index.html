@@ -63,7 +63,7 @@
   <table>
     <thead><tr>
       <th>PROJECT</th><th>PROCESS</th><th>PORTS</th><th>STATUS</th>
-      <th>PID</th><th>UPTIME</th><th>MEM</th><th>LAST</th><th>ACTIONS</th>
+      <th>PID</th><th>UPTIME</th><th>MEM</th><th>CPU</th><th>LAST</th><th>ACTIONS</th>
     </tr></thead>
     <tbody id="proc-body"></tbody>
   </table>
@@ -276,15 +276,16 @@ async function loadPS() {
     processes.forEach((p, i) => {
       const key = p.process ? `${p.project}/${p.process}` : p.project;
       const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
+      const cpu = p.cpu_percent > 0 ? p.cpu_percent.toFixed(0) + '%' : '—';
       const cwd = p.work_dir ? shortenPath(p.work_dir) : '';
 
       let tr = rowMap.get(key);
       if (!tr) {
         tr = document.createElement('tr');
         tr.dataset.key = key;
-        // 9 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | LAST | ACTIONS
-        for (let c = 0; c < 9; c++) tr.appendChild(document.createElement('td'));
-        tr.querySelectorAll('td')[8].innerHTML = actionsHTML(key);
+        // 10 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | CPU | LAST | ACTIONS
+        for (let c = 0; c < 10; c++) tr.appendChild(document.createElement('td'));
+        tr.querySelectorAll('td')[9].innerHTML = actionsHTML(key);
         tr.addEventListener('click', () => streamLogs(key));
       }
       rowMap.delete(key);
@@ -314,8 +315,9 @@ async function loadPS() {
       setText(cells[4], p.pid || '—');
       setText(cells[5], p.uptime || '—');
       setText(cells[6], mem);
-      setText(cells[7], relTime(p.last_log_time));
-      // actions[8] set once at row creation
+      setText(cells[7], cpu);
+      setText(cells[8], relTime(p.last_log_time));
+      // actions[9] set once at row creation
 
       const sibling = tbody.children[i];
       if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
