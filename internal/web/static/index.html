@@ -10,12 +10,32 @@
     header h1 { margin: 0; font-size: 16px; color: #9cdcfe; }
     #status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; display: inline-block; }
     #daemon-version { color: #585858; font-size: 11px; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th { text-align: left; padding: 8px 12px; background: #252526; color: #858585; font-weight: normal; border-bottom: 1px solid #3c3c3c; }
-    td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: middle; }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover td { background: #2a2a2a; }
-    tbody tr.active-log td { background: #1f2d2d; }
+    .main { padding: 10px 14px; }
+    .toolbar { min-height: 32px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+    #filter { min-width: 260px; height: 28px; border: 1px solid #3c3c3c; background: #1f2022; color: #d4d4d4; border-radius: 4px; padding: 0 9px; font-family: monospace; font-size: 13px; }
+    #overview { margin-left: auto; display: flex; gap: 12px; color: #858585; font-size: 12px; white-space: nowrap; }
+    #overview b { color: #d4d4d4; font-weight: normal; }
+    #project-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+    #project-table th { text-align: left; padding: 8px 12px; background: #252526; color: #858585; font-weight: normal; border-bottom: 1px solid #3c3c3c; position: sticky; top: 0; z-index: 1; }
+    #project-table td { padding: 6px 12px; border-bottom: 1px solid #2d2d2d; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #project-table tbody tr:hover td { background: #2a2a2a; }
+    #project-table tbody tr.active-log td { background: #1f2d2d; }
+    .empty { padding: 24px 12px; color: #585858; text-align: center; border: 1px solid #2d2d2d; border-radius: 6px; }
+    .project-row { cursor: pointer; background: #202124; }
+    .project-row.open td { background: #232426; }
+    .project-row.active-log td:first-child { box-shadow: inset 3px 0 0 #4ec9b0; }
+    .service-row { cursor: pointer; background: #1a1a1a; }
+    .service-row td:first-child { padding-left: 28px; }
+    .chevron { display: inline-block; width: 14px; color: #858585; line-height: 1; }
+    .project-title { display: flex; align-items: center; gap: 6px; min-width: 0; color: #e4e4e4; }
+    .project-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .copy-cwd { color: #858585; }
+    .copy-cwd.copied { color: #4ec9b0; }
+    .health { color: #858585; }
+    .health .running { color: #4ec9b0; }
+    .health .stopped { color: #585858; }
+    .health .crashed { color: #f48771; }
+    .ports { min-width: 0; display: flex; gap: 5px; flex-wrap: nowrap; align-items: center; overflow: hidden; }
     .running { color: #4ec9b0; }
     .stopped { color: #585858; }
     .crashed { color: #f48771; }
@@ -24,7 +44,7 @@
     a.port-link { color: #4ec9b0; text-decoration: none; }
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
     .port-dim { color: #484848; }
-    .cwd { color: #444; font-size: 10px; margin-top: 2px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .port-more { color: #858585; }
     .err-badge { display: inline-block; background: #c0392b; color: #fff; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px; margin-left: 6px; cursor: pointer; vertical-align: middle; line-height: 16px; }
     .err-badge:hover { background: #e74c3c; }
 
@@ -49,7 +69,17 @@
     #cfg-meta .stale { color: #c0960a; }
     #cfg-meta button { background: none; border: none; color: #4ec9b0; font-size: 11px; cursor: pointer; padding: 0; text-decoration: underline; }
     #cfg-pre { flex: 1; overflow-y: auto; margin: 0; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.7; white-space: pre; color: #d4d4d4; background: #1a1a1a; border-radius: 0 0 6px 6px; }
-    .main { /* padding-bottom set by JS */ }
+    @media (max-width: 980px) {
+      #overview { width: 100%; margin-left: 0; }
+      #project-table th:nth-child(5), #project-table th:nth-child(8),
+      #project-table td:nth-child(5), #project-table td:nth-child(8) { display: none; }
+    }
+    @media (max-width: 700px) {
+      .main { padding-left: 10px; padding-right: 10px; }
+      #filter { min-width: 100%; }
+      #project-table th:nth-child(4), #project-table th:nth-child(5), #project-table th:nth-child(6), #project-table th:nth-child(8),
+      #project-table td:nth-child(4), #project-table td:nth-child(5), #project-table td:nth-child(6), #project-table td:nth-child(8) { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -60,12 +90,29 @@
   <span id="daemon-status" style="color:#858585;font-size:12px">loading...</span>
 </header>
 <div class="main" id="main">
-  <table>
+  <div class="toolbar">
+    <input id="filter" placeholder="filter project / process / port" autocomplete="off">
+    <button id="refresh-btn" class="btn" title="refresh status">refresh</button>
+    <div id="overview"></div>
+  </div>
+  <table id="project-table">
+    <colgroup>
+      <col style="width:23%">
+      <col style="width:12%">
+      <col style="width:14%">
+      <col style="width:18%">
+      <col style="width:8%">
+      <col style="width:10%">
+      <col style="width:8%">
+      <col style="width:8%">
+      <col style="width:7%">
+      <col style="width:11%">
+    </colgroup>
     <thead><tr>
-      <th>PROJECT</th><th>PROCESS</th><th>PORTS</th><th>STATUS</th>
-      <th>PID</th><th>UPTIME</th><th>MEM</th><th>CPU</th><th>LAST</th><th>ACTIONS</th>
+      <th>PROJECT / PROCESS</th><th>ACTIONS</th><th>PORTS</th><th>STATUS</th>
+      <th>PID</th><th>UPTIME</th><th>MEM</th><th>CPU</th><th>LAST</th>
     </tr></thead>
-    <tbody id="proc-body"></tbody>
+    <tbody id="project-body"></tbody>
   </table>
 </div>
 <div id="cfg-modal" onclick="if(event.target===this)closeCfg()">
@@ -89,9 +136,13 @@
 <script>
 let eventSource = null;
 let activeKey   = null;
+let lastPSLoad  = 0;
 
 // ── Error acknowledgement ────────────────────────────────────────────────────
 const ACK_KEY = 'nanny-ack';
+const EXPANDED_KEY = 'nanny-expanded-projects';
+
+let latestProcesses = [];
 
 function getAckTime(key) {
   try { return JSON.parse(localStorage.getItem(ACK_KEY) || '{}')[key] || ''; }
@@ -104,6 +155,16 @@ function setAckTime(key) {
     map[key] = new Date().toISOString();
     localStorage.setItem(ACK_KEY, JSON.stringify(map));
   } catch {}
+}
+
+function getExpandedProjects() {
+  try { return new Set(JSON.parse(localStorage.getItem(EXPANDED_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+
+function setExpandedProjects(projects) {
+  try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...projects])); }
+  catch {}
 }
 
 // ── Log panel resize ─────────────────────────────────────────────────────────
@@ -178,6 +239,16 @@ function shortenPath(p) {
   return '…/' + parts.slice(-3).join('/');
 }
 
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[ch]);
+}
+
 function portsHTML(p) {
   const actual = p.actual_ports || [];
   const declared = p.declared_port || 0;
@@ -196,12 +267,81 @@ function portsHTML(p) {
   return '<span class="port-dim">—</span>';
 }
 
+function projectPortsHTML(project) {
+  const ports = [];
+  for (const p of project.processes) {
+    const actual = p.actual_ports || [];
+    if (actual.length > 0) {
+      for (const port of actual) ports.push({ port, active: true });
+    } else if (p.declared_port > 0) {
+      ports.push({ port: p.declared_port, active: p.status === 'running' });
+    }
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of ports) {
+    if (seen.has(item.port)) continue;
+    seen.add(item.port);
+    unique.push(item);
+  }
+
+  if (unique.length === 0) return '<span class="port-dim">—</span>';
+
+  const visible = unique.slice(0, 4).map(item => {
+    if (item.active) {
+      return `<a class="port-link" href="http://localhost:${item.port}" target="_blank" onclick="event.stopPropagation()">${item.port}</a>`;
+    }
+    return `<span class="port-dim">${item.port}</span>`;
+  }).join('&nbsp;');
+
+  const more = unique.length > 4 ? ` <span class="port-more">+${unique.length - 4}</span>` : '';
+  return visible + more;
+}
+
+function uptimeSeconds(uptime) {
+  if (!uptime) return 0;
+  let total = 0;
+  const re = /(\d+)([hms])/g;
+  let match;
+  while ((match = re.exec(uptime)) !== null) {
+    const n = Number(match[1]);
+    if (match[2] === 'h') total += n * 3600;
+    if (match[2] === 'm') total += n * 60;
+    if (match[2] === 's') total += n;
+  }
+  return total;
+}
+
 function actionsHTML(key) {
   const project = key.split('/')[0];
-  return `<button class="btn" onclick="doAction('${key}','start');event.stopPropagation()" title="start">&#9654;</button>`
-       + `<button class="btn" onclick="doAction('${key}','stop');event.stopPropagation()" title="stop">&#9632;</button>`
-       + `<button class="btn" onclick="doAction('${key}','restart');event.stopPropagation()" title="restart">&#8634;</button>`
-       + `<button class="btn" onclick="showCfg('${project}');event.stopPropagation()" title="view app-nanny.toml">&#9881;</button>`;
+  return `<button class="btn service-action" data-key="${esc(key)}" data-action="start" title="start">&#9654;</button>`
+       + `<button class="btn service-action" data-key="${esc(key)}" data-action="stop" title="stop">&#9632;</button>`
+       + `<button class="btn service-action" data-key="${esc(key)}" data-action="restart" title="restart">&#8634;</button>`
+       + `<button class="btn config-action" data-project="${esc(project)}" title="view app-nanny.toml">&#9881;</button>`;
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  if (!btn) return;
+  const old = btn.textContent;
+  btn.textContent = '✓';
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.textContent = old;
+    btn.classList.remove('copied');
+  }, 900);
 }
 
 let cfgData = null;
@@ -252,11 +392,212 @@ function closeCfg() {
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCfg(); });
 
-function setText(td, text) { if (td.textContent !== String(text)) td.textContent = text; }
-function setHTML(td, html)  { if (td.innerHTML !== html) td.innerHTML = html; }
-function setClass(td, cls)  { if (td.className !== cls) td.className = cls; }
+function serviceKey(p) {
+  return p.process ? `${p.project}/${p.process}` : p.project;
+}
 
-// ── Process table ────────────────────────────────────────────────────────────
+function groupProcesses(processes) {
+  const projects = new Map();
+  for (const p of processes) {
+    if (!projects.has(p.project)) {
+      projects.set(p.project, { name: p.project, processes: [] });
+    }
+    projects.get(p.project).processes.push(p);
+  }
+  const groups = [...projects.values()];
+  groups.sort((a, b) => a.name.localeCompare(b.name));
+  for (const group of groups) {
+    group.processes.sort((a, b) => (a.process || '').localeCompare(b.process || ''));
+  }
+  return groups;
+}
+
+function projectSummary(project) {
+  const summary = {
+    running: 0,
+    stopped: 0,
+    crashed: 0,
+    mem: 0,
+    cpu: 0,
+    newestLog: '',
+    workDir: '',
+    uptime: '',
+    uptimeSec: 0,
+    hasActiveLog: false,
+    hasNewErr: false,
+  };
+
+  for (const p of project.processes) {
+    const key = serviceKey(p);
+    if (p.status === 'running') summary.running++;
+    else if (p.status === 'crashed') summary.crashed++;
+    else summary.stopped++;
+
+    if (p.mem_mb > 0) summary.mem += p.mem_mb;
+    if (p.cpu_percent > 0) summary.cpu += p.cpu_percent;
+    if (p.work_dir && !summary.workDir) summary.workDir = p.work_dir;
+    if (uptimeSeconds(p.uptime) > summary.uptimeSec) {
+      summary.uptime = p.uptime;
+      summary.uptimeSec = uptimeSeconds(p.uptime);
+    }
+    if (p.last_log_time && (!summary.newestLog || new Date(p.last_log_time) > new Date(summary.newestLog))) {
+      summary.newestLog = p.last_log_time;
+    }
+    if (key === activeKey) summary.hasActiveLog = true;
+
+    const ackTime = getAckTime(key);
+    if (p.last_error_time && p.error_count > 0 && new Date(p.last_error_time) > new Date(ackTime || 0)) {
+      summary.hasNewErr = true;
+    }
+  }
+  return summary;
+}
+
+function healthHTML(summary) {
+  const parts = [];
+  parts.push(`<span>${summary.total} services</span>`);
+  if (summary.running > 0) parts.push(`<span class="running">${summary.running} running</span>`);
+  if (summary.crashed > 0) parts.push(`<span class="crashed">${summary.crashed} crashed</span>`);
+  if (summary.stopped > 0) parts.push(`<span class="stopped">${summary.stopped} stopped</span>`);
+  if (summary.hasNewErr) parts.push(`<span class="err-badge" title="new errors">!</span>`);
+  return parts.join(' · ');
+}
+
+function processRowHTML(p) {
+  const key = serviceKey(p);
+  const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
+  const cpu = p.cpu_percent > 0 ? p.cpu_percent.toFixed(0) + '%' : '—';
+  const ackTime = getAckTime(key);
+  const hasNewErr = p.last_error_time && p.error_count > 0
+                 && new Date(p.last_error_time) > new Date(ackTime || 0);
+  const badgeHTML = hasNewErr
+    ? ` <span class="err-badge ack-err" data-key="${esc(key)}" title="点击确认">${p.error_count}</span>`
+    : '';
+
+  return `<tr class="service-row${key === activeKey ? ' active-log' : ''}" data-key="${esc(key)}">
+    <td>${esc(p.process || 'default')}</td>
+    <td>${actionsHTML(key)}</td>
+    <td>${portsHTML(p)}</td>
+    <td class="${esc(p.status)}">${esc(p.status)}${badgeHTML}</td>
+    <td>${p.pid || '—'}</td>
+    <td>${esc(p.uptime || '—')}</td>
+    <td>${mem}</td>
+    <td>${cpu}</td>
+    <td>${relTime(p.last_log_time)}</td>
+  </tr>`;
+}
+
+function projectHTML(project, expandedProjects) {
+  const summary = projectSummary(project);
+  const open = expandedProjects.has(project.name);
+  const count = project.processes.length;
+  summary.total = count;
+  const mem = summary.mem > 0 ? summary.mem.toFixed(0) + 'M' : '—';
+  const cpu = summary.cpu > 0 ? summary.cpu.toFixed(0) + '%' : '—';
+  const activeClass = summary.hasActiveLog ? ' active-log' : '';
+  const chevron = open ? 'v' : '>';
+
+  const projectRow = `<tr class="project-row${open ? ' open' : ''}${activeClass}" data-project="${esc(project.name)}" aria-expanded="${open}">
+    <td><span class="project-title">
+      <span class="chevron">${chevron}</span>
+      <span class="name">${esc(project.name)}</span>
+    </span></td>
+    <td>${summary.workDir ? `<button class="btn copy-cwd" data-path="${esc(summary.workDir)}" title="copy workspace path">cwd</button>` : ''}</td>
+    <td><span class="ports">${projectPortsHTML(project)}</span></td>
+    <td><span class="health">${healthHTML(summary)}</span></td>
+    <td>—</td>
+    <td>${esc(summary.uptime || '—')}</td>
+    <td>${mem}</td>
+    <td>${cpu}</td>
+    <td>${relTime(summary.newestLog)}</td>
+  </tr>`;
+  return projectRow + (open ? project.processes.map(processRowHTML).join('') : '');
+}
+
+function processMatchesFilter(p, filter) {
+  if (!filter) return true;
+  const fields = [
+    p.project,
+    p.process || 'default',
+    p.status,
+    p.work_dir || '',
+    String(p.declared_port || ''),
+    ...(p.actual_ports || []).map(String),
+  ];
+  return fields.some(field => field.toLowerCase().includes(filter));
+}
+
+function renderProjects(processes) {
+  const filter = document.getElementById('filter').value.trim().toLowerCase();
+  const filtered = processes.filter(p => processMatchesFilter(p, filter));
+  const projects = groupProcesses(filtered);
+  const expandedProjects = getExpandedProjects();
+  const tbody = document.getElementById('project-body');
+
+  if (projects.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty">no services</div></td></tr>';
+  } else {
+    tbody.innerHTML = projects.map(project => projectHTML(project, expandedProjects)).join('');
+  }
+
+  const issueCount = processes.filter(p => p.status === 'crashed' || (p.error_count > 0 && p.last_error_time)).length;
+  document.getElementById('overview').innerHTML =
+    `<span><b>${groupProcesses(processes).length}</b> projects</span>` +
+    `<span><b>${processes.length}</b> daemons</span>` +
+    `<span><b>${issueCount}</b> issues</span>`;
+
+  bindProjectEvents();
+}
+
+function bindProjectEvents() {
+  document.querySelectorAll('.project-row').forEach(row => {
+    row.addEventListener('click', event => {
+      if (event.target.closest('a')) return;
+      if (event.target.closest('button')) return;
+      const name = row.dataset.project;
+      const expandedProjects = getExpandedProjects();
+      const open = !expandedProjects.has(name);
+      if (open) expandedProjects.add(name);
+      else expandedProjects.delete(name);
+      setExpandedProjects(expandedProjects);
+      renderProjects(latestProcesses);
+    });
+  });
+
+  document.querySelectorAll('.service-row[data-key]').forEach(row => {
+    row.addEventListener('click', () => streamLogs(row.dataset.key));
+  });
+
+  document.querySelectorAll('.service-action').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.stopPropagation();
+      doAction(btn.dataset.key, btn.dataset.action);
+    });
+  });
+
+  document.querySelectorAll('.copy-cwd').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.stopPropagation();
+      copyText(btn.dataset.path, btn);
+    });
+  });
+
+  document.querySelectorAll('.config-action').forEach(btn => {
+    btn.addEventListener('click', event => {
+      event.stopPropagation();
+      showCfg(btn.dataset.project);
+    });
+  });
+
+  document.querySelectorAll('.ack-err').forEach(badge => {
+    badge.addEventListener('click', event => {
+      event.stopPropagation();
+      ackErr(badge.dataset.key);
+    });
+  });
+}
+
+// ── Project list ─────────────────────────────────────────────────────────────
 async function loadPS() {
   try {
     const r = await fetch('/api/ps');
@@ -269,61 +610,9 @@ async function loadPS() {
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
 
-    const tbody = document.getElementById('proc-body');
-    const rowMap = new Map();
-    for (const tr of tbody.querySelectorAll('tr[data-key]')) rowMap.set(tr.dataset.key, tr);
-
-    processes.forEach((p, i) => {
-      const key = p.process ? `${p.project}/${p.process}` : p.project;
-      const mem = p.mem_mb > 0 ? p.mem_mb.toFixed(0) + 'M' : '—';
-      const cpu = p.cpu_percent > 0 ? p.cpu_percent.toFixed(0) + '%' : '—';
-      const cwd = p.work_dir ? shortenPath(p.work_dir) : '';
-
-      let tr = rowMap.get(key);
-      if (!tr) {
-        tr = document.createElement('tr');
-        tr.dataset.key = key;
-        // 10 columns: PROJECT | PROCESS | PORTS | STATUS | PID | UPTIME | MEM | CPU | LAST | ACTIONS
-        for (let c = 0; c < 10; c++) tr.appendChild(document.createElement('td'));
-        tr.querySelectorAll('td')[9].innerHTML = actionsHTML(key);
-        tr.addEventListener('click', () => streamLogs(key));
-      }
-      rowMap.delete(key);
-
-      // Highlight active log row
-      if (key === activeKey) tr.classList.add('active-log');
-      else tr.classList.remove('active-log');
-
-      const cells = tr.querySelectorAll('td');
-      // PROJECT + cwd subtitle
-      const projHTML = `<div>${p.project}</div>`
-        + (cwd ? `<div class="cwd" title="${p.work_dir}">${cwd}</div>` : '');
-      setHTML(cells[0], projHTML);
-      setText(cells[1], p.process || '—');
-      setHTML(cells[2], portsHTML(p));       // PORTS (3rd)
-
-      // STATUS (4th) + error badge
-      setClass(cells[3], p.status);
-      const ackTime = getAckTime(key);
-      const hasNewErr = p.last_error_time && p.error_count > 0
-                     && new Date(p.last_error_time) > new Date(ackTime || 0);
-      const badgeHTML = hasNewErr
-        ? ` <span class="err-badge" title="点击确认" onclick="ackErr('${key}');event.stopPropagation()">${p.error_count}</span>`
-        : '';
-      setHTML(cells[3], p.status + badgeHTML);
-
-      setText(cells[4], p.pid || '—');
-      setText(cells[5], p.uptime || '—');
-      setText(cells[6], mem);
-      setText(cells[7], cpu);
-      setText(cells[8], relTime(p.last_log_time));
-      // actions[9] set once at row creation
-
-      const sibling = tbody.children[i];
-      if (sibling !== tr) tbody.insertBefore(tr, sibling || null);
-    });
-
-    for (const tr of rowMap.values()) tr.remove();
+    latestProcesses = processes;
+    lastPSLoad = Date.now();
+    renderProjects(latestProcesses);
 
     document.getElementById('daemon-status').textContent = 'daemon: running';
     document.getElementById('status-dot').style.background = '#4ec9b0';
@@ -357,9 +646,7 @@ function streamLogs(key) {
   const logBody = document.getElementById('log-body');
   logBody.innerHTML = '';
 
-  for (const tr of document.querySelectorAll('tr[data-key]')) {
-    tr.classList.toggle('active-log', tr.dataset.key === key);
-  }
+  renderProjects(latestProcesses);
 
   const sseKey = key.replace('/', '-');
   eventSource = new EventSource('/api/logs/' + sseKey + '/stream');
@@ -377,8 +664,15 @@ function clearLog() {
   document.getElementById('log-body').innerHTML = '';
 }
 
+document.getElementById('filter').addEventListener('input', () => renderProjects(latestProcesses));
+document.getElementById('refresh-btn').addEventListener('click', () => loadPS());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastPSLoad > 30000) loadPS();
+});
+window.addEventListener('focus', () => {
+  if (Date.now() - lastPSLoad > 30000) loadPS();
+});
 loadPS();
-setInterval(loadPS, 3000);
 </script>
 </body>
 </html>
