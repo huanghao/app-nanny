@@ -55,6 +55,13 @@ func TestMatchesError(t *testing.T) {
 	}{
 		{"GET /api 500 3ms", true},
 		{"GET /api 200 3ms", false},
+		// access-log status code (uvicorn/gunicorn/nginx CLF) — must match.
+		{`INFO: 127.0.0.1:60307 - "GET /api/sync/status HTTP/1.1" 500 Internal Server Error`, true},
+		{`INFO: 127.0.0.1:60307 - "GET /api/sync/status HTTP/1.1" 502 Bad Gateway`, true},
+		{`INFO: 127.0.0.1:60307 - "GET /api/sync/status HTTP/1.1" 200 OK`, false},
+		// millisecond timestamps like `11:04:36,524` must NOT match (the comma glues it).
+		{"2026-07-20 11:04:36,524 mnl.app memo built: returned_tasks", false},
+		{"2026-07-20 11:04:36,509 mnl.app memo built: wip", false},
 		{"Traceback (most recent call last):", true},
 		{"Error: something failed", true},
 		{"TypeError: cannot read property", true},

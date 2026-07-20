@@ -10,7 +10,11 @@ import (
 	"github.com/huanghao/app-nanny/internal/config"
 )
 
-var http5xxRe = regexp.MustCompile(`\b5\d{2}\b`)
+// Matches a 5xx HTTP status code in an access-log line (e.g. `"GET / HTTP/1.1" 500`).
+// The leading delimiter (^ | space | quote) prevents false positives where a 5xx-looking
+// number is glued to a comma — most commonly the millisecond field of a timestamp like
+// `11:04:36,524`, which would otherwise light up ~10% of all log lines.
+var http5xxRe = regexp.MustCompile(`(?:^|[" ])5\d{2}\b`)
 
 // ErrorEvent is one captured error occurrence with surrounding context lines.
 type ErrorEvent struct {
