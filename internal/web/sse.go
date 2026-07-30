@@ -4,8 +4,11 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/huanghao/app-nanny/internal/ipc"
 )
 
 // SSELogsHandler streams log lines for key as Server-Sent Events.
@@ -49,17 +52,52 @@ func SSELogsHandler(mgr ManagerIface, key string, w http.ResponseWriter, r *http
 	}
 }
 
-// RegisterSSERoute adds the /api/logs/:key/stream SSE route to mux.
+// RegisterSSERoute adds the /api/v1/logs/:key route to mux — both the
+// paginated snapshot (GET .../logs/<key>?lines=100) and the streamed tail
+// (GET .../logs/<key>/stream) live under the same prefix pattern, so they
+// have to share one registration: net/http.ServeMux panics if you register
+// two handlers for the same pattern, and a variable key segment followed by
+// a fixed "/stream" suffix isn't expressible as two separate patterns in
+// the classic ServeMux matching this project uses.
 func RegisterSSERoute(mux *http.ServeMux, mgr ManagerIface) {
-	mux.HandleFunc("/api/logs/", func(w http.ResponseWriter, r *http.Request) {
-		// Path: /api/logs/<key>/stream  (key may contain "-" for "proj-process")
-		path := strings.TrimPrefix(r.URL.Path, "/api/logs/")
-		path = strings.TrimSuffix(path, "/stream")
-		key := strings.ReplaceAll(path, "/", "-")
-		if key == "" {
-			http.Error(w, "missing key", http.StatusBadRequest)
+	mux.HandleFunc(apiPrefix+"/logs/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeAPIError(w, http.StatusMethodNotAllowed, errCodeBadRequest, "method not allowed")
 			return
 		}
-		SSELogsHandler(mgr, key, w, r)
+		path := strings.TrimPrefix(r.URL.Path, apiPrefix+"/logs/")
+		if strings.HasSuffix(path, "/stream") {
+			// Path may contain "/" for "project/process" — matches the
+			// "-"-joined key convention the log files themselves use.
+			key := strings.ReplaceAll(strings.TrimSuffix(path, "/stream"), "/", "-")
+			if key == "" {
+				writeAPIError(w, http.StatusBadRequest, errCodeBadRequest, "missing key")
+				return
+			}
+			SSELogsHandler(mgr, key, w, r)
+			return
+		}
+
+		key := strings.TrimSuffix(path, "/")
+		if key == "" {
+			writeAPIError(w, http.StatusBadRequest, errCodeBadRequest, "missing key")
+			return
+		}
+		n := 100
+		if raw := r.URL.Query().Get("lines"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				n = parsed
+			}
+		}
+		logPath := mgr.LogPath(key)
+		var subKeys []string
+		if logPath == "" {
+			subKeys = mgr.SubProcessKeys(key)
+		}
+		writeJSON(w, ipc.LogsResult{
+			Lines:   mgr.LogLines(key, n),
+			Path:    logPath,
+			SubKeys: subKeys,
+		})
 	})
 }

@@ -52,25 +52,38 @@ type StatusParams struct {
 	Name string `json:"name"`
 }
 
-type ProcessInfo struct {
-	Project      string  `json:"project"`
-	Process      string  `json:"process"`
-	Status       string  `json:"status"`
-	PID          int     `json:"pid"`
-	Uptime       string  `json:"uptime"`
-	Restarts     int     `json:"restarts"`
-	DeclaredPort int     `json:"declared_port"`
-	ActualPorts  []int   `json:"actual_ports"`
+// Process is the one canonical record of a tracked (running, stopped, or
+// crashed) process — used by both "ps" (PSResult) and "status"
+// (StatusResult). These used to be two separate, field-divergent types
+// (ProcessInfo / ProcessStatus) that drifted from each other; unifying them
+// is part of stabilizing this as a real API surface, not just an
+// implementation detail two call sites happened to each shape their own way.
+//
+// Not to be confused with daemon.Process (internal/daemon/process.go), the
+// live in-process tracker this type is a point-in-time snapshot of.
+type Process struct {
+	// Key is Project (Mode A) or "Project/Process" (Mode B) — the same
+	// identifier accepted back as StartParams.Name/.Process etc.
+	Key           string  `json:"key"`
+	Project       string  `json:"project"`
+	Process       string  `json:"process"`
+	Status        string  `json:"status"`
+	PID           int     `json:"pid"`
+	Uptime        string  `json:"uptime"`
+	Restarts      int     `json:"restarts"`
+	DeclaredPort  int     `json:"declared_port"`
+	ActualPorts   []int   `json:"actual_ports"`
 	MemMB         float64 `json:"mem_mb"`
 	CPUPercent    float64 `json:"cpu_percent"`
 	WorkDir       string  `json:"work_dir"`
 	ErrorCount    int     `json:"error_count"`
 	LastErrorTime string  `json:"last_error_time"` // RFC3339, empty if no errors
 	LastLogTime   string  `json:"last_log_time"`   // RFC3339, time of last log line
+	LogPath       string  `json:"log_path"`        // "" for a Mode B project key (no single file — see SubKeys)
 }
 
 type PSResult struct {
-	Processes []ProcessInfo `json:"processes"`
+	Processes []Process `json:"processes"`
 }
 
 type AddResult struct {
@@ -111,19 +124,5 @@ type ErrorEvent struct {
 
 // StatusResult is the response to "status <name>".
 type StatusResult struct {
-	Processes []ProcessStatus `json:"processes"`
-}
-
-// ProcessStatus is the detailed view of one process.
-type ProcessStatus struct {
-	Key         string  `json:"key"`
-	Status      string  `json:"status"`
-	PID         int     `json:"pid"`
-	Uptime      string  `json:"uptime"`
-	Restarts    int     `json:"restarts"`
-	MemMB       float64 `json:"mem_mb"`
-	CPUPercent  float64 `json:"cpu_percent"`
-	ActualPorts []int   `json:"actual_ports"`
-	ErrorCount  int     `json:"error_count"`
-	LogPath     string  `json:"log_path"`
+	Processes []Process `json:"processes"`
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -80,14 +79,18 @@ func Run(socketPath, dataDir string) error {
 
 	go srv.Serve(ln)
 
-	// Start web console HTTP server on :7070
-	webMux := web.NewMux(mgr)
-	web.RegisterSSERoute(webMux, mgr)
-	webMux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"version":%q,"commit":%q}`, daemonVersion, daemonCommit)
+	// Web console + public HTTP API, bound to loopback only — this is a
+	// local-machine tool by design (see docs/2026-06-04-design.md §13,
+	// "不支持 SSH 远程或多机管理"), so it shouldn't be reachable from
+	// anywhere else on the network even though nothing else in the
+	// protocol enforces that.
+	webMux := web.NewMux(mgr, web.VersionInfo{
+		Version:    daemonVersion,
+		Commit:     daemonCommit,
+		APIVersion: web.APIVersion,
 	})
-	webSrv := web.NewServer(":7070", webMux)
+	web.RegisterSSERoute(webMux, mgr)
+	webSrv := web.NewServer("127.0.0.1:7070", webMux)
 	go func() {
 		if err := webSrv.Start(); err != nil {
 			log.Printf("web: server error: %v", err)
@@ -103,8 +106,11 @@ func Run(socketPath, dataDir string) error {
 	return nil
 }
 
-// registerHandlers wires IPC methods to Manager operations.
-func registerHandlers(srv *ipc.Server, mgr *Manager, sigCh chan<- os.Signal) {
+// registerHandlers wires IPC methods to ProcessManager operations. Takes
+// the interface, not *Manager, so this dispatch layer's dependency on
+// "what app-nanny can do" is explicit and doesn't reach into Manager's
+// concrete internals.
+func registerHandlers(srv *ipc.Server, mgr ProcessManager, sigCh chan<- os.Signal) {
 	srv.Handle("add", func(params json.RawMessage) (any, error) {
 		var p ipc.AddParams
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -202,16 +208,7 @@ func registerHandlers(srv *ipc.Server, mgr *Manager, sigCh chan<- os.Signal) {
 		if p.Last {
 			n = 1
 		}
-		raw := mgr.RecentErrors(key, n)
-		events := make([]ipc.ErrorEvent, len(raw))
-		for i, e := range raw {
-			events[i] = ipc.ErrorEvent{
-				Time:  e.Time.Format("15:04:05"),
-				Key:   e.Key,
-				Lines: e.Lines,
-			}
-		}
-		return ipc.ErrorsResult{Events: events}, nil
+		return ipc.ErrorsResult{Events: mgr.RecentErrorEvents(key, n)}, nil
 	})
 
 	srv.Handle("status", func(params json.RawMessage) (any, error) {

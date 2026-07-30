@@ -12,15 +12,14 @@ import (
 )
 
 func TestFullStack_PSEndpoint(t *testing.T) {
-	stub := &stubManager{psResult: []ipc.ProcessInfo{
+	stub := &stubManager{psResult: []ipc.Process{
 		{Project: "demo", Status: "running", PID: 9999, MemMB: 32.5},
 	}}
-	mux := web.NewMux(stub)
-	web.RegisterSSERoute(mux, stub)
+	mux := testMux(stub)
 	srv := httptest.NewServer(web.OriginMiddleware(mux))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/api/ps")
+	resp, err := http.Get(srv.URL + "/api/v1/ps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +39,11 @@ func TestFullStack_PSEndpoint(t *testing.T) {
 
 func TestFullStack_StartAction(t *testing.T) {
 	stub := &stubManager{}
-	mux := web.NewMux(stub)
+	mux := testMux(stub)
 	srv := httptest.NewServer(web.OriginMiddleware(mux))
 	defer srv.Close()
 
-	resp, err := http.Post(srv.URL+"/api/demo/start", "application/json", nil)
+	resp, err := http.Post(srv.URL+"/api/v1/demo/start", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestFullStack_StartAction(t *testing.T) {
 
 func TestFullStack_StaticRedirect(t *testing.T) {
 	stub := &stubManager{}
-	mux := web.NewMux(stub)
+	mux := testMux(stub)
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}

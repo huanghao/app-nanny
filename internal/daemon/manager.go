@@ -16,6 +16,49 @@ import (
 	"github.com/huanghao/app-nanny/internal/ipc"
 )
 
+// ProcessManager is the daemon-facing contract for managing and querying
+// tracked processes — the boundary between "what app-nanny does" (this
+// interface) and "how" (the concrete *Manager below). Transport layers
+// (IPC socket dispatch in daemon.go, HTTP handlers in internal/web —
+// which declares its own structurally-identical ManagerIface, since it
+// can't import this package without an import cycle) depend on this, not
+// *Manager directly, so *Manager's internals — and the process-tracking,
+// port-detection, and log-storage strategies behind it — can be refactored
+// freely as long as this contract holds.
+type ProcessManager interface {
+	Add(name, dir string) error
+	Remove(name string) error
+	Start(projectName, processName string) error
+	Stop(projectName, processName string) error
+	Restart(projectName, processName string) error
+	PS() []ipc.Process
+	DetailedStatus(projectName string) ipc.StatusResult
+	LogPath(key string) string
+	SubProcessKeys(project string) []string
+	LogLines(key string, n int) []string
+	RecentErrors(key string, n int) []ErrorEvent
+	RecentErrorEvents(key string, n int) []ipc.ErrorEvent
+	ProjectToml(name string) (string, error)
+	ProjectTomlActive(name string) (content string, loadedAt time.Time)
+	ProjectTomlDiskMtime(name string) time.Time
+}
+
+var _ ProcessManager = (*Manager)(nil)
+
+// PortDetector abstracts "what ports is this process (and its children)
+// actually listening on right now" — the real answer requires shelling out
+// to lsof/pgrep (see lsofPortDetector below), which a Manager test would
+// otherwise have to do for real. Injected so it can be swapped for a fake
+// in tests, and so the detection strategy itself (currently lsof-based) is
+// free to change without touching Manager's other logic.
+type PortDetector interface {
+	ActualPorts(pid, pgid int) []int
+}
+
+type lsofPortDetector struct{}
+
+func (lsofPortDetector) ActualPorts(pid, pgid int) []int { return ActualPorts(pid, pgid) }
+
 type Manager struct {
 	mu        sync.Mutex
 	registry  *config.Registry
@@ -28,6 +71,7 @@ type Manager struct {
 	loggers    map[string]*Logger
 	errRing    *ErrorRing
 	metrics    *Metrics
+	ports      PortDetector
 }
 
 func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
@@ -42,8 +86,18 @@ func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
 		loggers:    make(map[string]*Logger),
 		errRing:    NewErrorRing(),
 		metrics:    NewMetrics(),
+		ports:      lsofPortDetector{},
 	}
 	return m
+}
+
+// SetPortDetector overrides the default lsof-based port detection — mainly
+// for tests, so PS()/DetailedStatus() port fields can be exercised without
+// actually shelling out to lsof/pgrep or needing a real listening process.
+func (m *Manager) SetPortDetector(d PortDetector) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ports = d
 }
 
 // AdoptProcess reconnects the Manager to a process that survived a daemon restart.
@@ -230,6 +284,18 @@ func tailLogFile(path string, n int) []string {
 // RecentErrors returns the most recent error events for key.
 func (m *Manager) RecentErrors(key string, n int) []ErrorEvent {
 	return m.errRing.RecentForKey(key, n)
+}
+
+// RecentErrorEvents is RecentErrors, pre-converted to the wire type — so
+// callers outside this package (the "errors" IPC handler, the HTTP API)
+// don't each need their own copy of the same conversion loop.
+func (m *Manager) RecentErrorEvents(key string, n int) []ipc.ErrorEvent {
+	raw := m.RecentErrors(key, n)
+	events := make([]ipc.ErrorEvent, len(raw))
+	for i, e := range raw {
+		events[i] = ipc.ErrorEvent{Time: e.Time.Format("15:04:05"), Key: e.Key, Lines: e.Lines}
+	}
+	return events
 }
 
 func (m *Manager) Add(name, dir string) error {
@@ -437,69 +503,84 @@ func (m *Manager) Restart(projectName, processName string) error {
 	return m.Start(projectName, processName)
 }
 
-func (m *Manager) PS() []ipc.ProcessInfo {
+// processRecordLocked builds the canonical Process record for a tracked
+// process. Must be called with m.mu held. Shared by PS() and
+// DetailedStatus() so the two response shapes can't drift from each other
+// the way the old ProcessInfo/ProcessStatus types did.
+func (m *Manager) processRecordLocked(key string, proc *Process) ipc.Process {
+	parts := strings.SplitN(key, "/", 2)
+	project := parts[0]
+	process := ""
+	if len(parts) == 2 {
+		process = parts[1]
+	}
+	uptime := ""
+	if proc.Status() == StatusRunning {
+		uptime = formatDuration(time.Since(proc.StartedAt()))
+		m.metrics.Update(key, proc.PID())
+	}
+	snap := m.metrics.Get(key)
+	errs := m.errRing.RecentForKey(key, 50)
+	lastErrTime := ""
+	if len(errs) > 0 {
+		lastErrTime = errs[0].Time.Format(time.RFC3339)
+	}
+	return ipc.Process{
+		Key:           key,
+		Project:       project,
+		Process:       process,
+		Status:        string(proc.Status()),
+		PID:           proc.PID(),
+		Uptime:        uptime,
+		Restarts:      proc.Restarts(),
+		DeclaredPort:  m.declaredPortForKey(key),
+		ActualPorts:   m.ports.ActualPorts(proc.PID(), proc.PGID()),
+		MemMB:         snap.MemMB,
+		CPUPercent:    snap.CPUPercent,
+		WorkDir:       proc.WorkDir(),
+		ErrorCount:    len(errs),
+		LastErrorTime: lastErrTime,
+		LastLogTime:   m.lastLogTimeStrLocked(key),
+		LogPath:       m.logPath(key),
+	}
+}
+
+func (m *Manager) PS() []ipc.Process {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var out []ipc.ProcessInfo
+	var out []ipc.Process
 	seen := make(map[string]bool) // projects already represented in out
 
 	// 1. All tracked processes (running / stopped / crashed)
 	for key, proc := range m.processes {
-		parts := strings.SplitN(key, "/", 2)
-		project := parts[0]
-		process := ""
-		if len(parts) == 2 {
-			process = parts[1]
-		}
-		seen[project] = true
-		uptime := ""
-		if proc.Status() == StatusRunning {
-			uptime = formatDuration(time.Since(proc.StartedAt()))
-			m.metrics.Update(key, proc.PID())
-		}
-		snap := m.metrics.Get(key)
-		errs := m.errRing.RecentForKey(key, 50)
-		errCount := len(errs)
-		lastErrTime := ""
-		if len(errs) > 0 {
-			lastErrTime = errs[0].Time.Format(time.RFC3339)
-		}
-		out = append(out, ipc.ProcessInfo{
-			Project:       project,
-			Process:       process,
-			Status:        string(proc.Status()),
-			PID:           proc.PID(),
-			Uptime:        uptime,
-			Restarts:      proc.Restarts(),
-			DeclaredPort:  m.declaredPortForKey(key),
-			ActualPorts:   ActualPorts(proc.PID(), proc.PGID()),
-			MemMB:         snap.MemMB,
-			CPUPercent:    snap.CPUPercent,
-			WorkDir:       proc.WorkDir(),
-			ErrorCount:    errCount,
-			LastErrorTime: lastErrTime,
-			LastLogTime:   m.lastLogTimeStrLocked(key),
-		})
+		seen[strings.SplitN(key, "/", 2)[0]] = true
+		out = append(out, m.processRecordLocked(key, proc))
 	}
 
-	// 2. Registered projects not yet started — show as stopped so they're visible
+	// 2. Config-defined processes not yet tracked — show as stopped so
+	// they're visible. Mode B checks per-subprocess: starting only
+	// "proj/backend" must not hide the never-started "proj/frontend".
 	for name, projDir := range m.registry.List() {
-		if seen[name] {
-			continue
-		}
 		cfg := m.configs[name]
 		if cfg == nil {
-			out = append(out, ipc.ProcessInfo{Project: name, Status: "stopped", WorkDir: projDir})
+			if seen[name] {
+				continue
+			}
+			out = append(out, ipc.Process{Key: name, Project: name, Status: "stopped", WorkDir: projDir})
 			continue
 		}
 		if cfg.IsModeB() {
 			for pName, pCfg := range cfg.Processes {
+				if _, tracked := m.processes[name+"/"+pName]; tracked {
+					continue
+				}
 				wd := projDir
 				if pCfg.WorkingDir != "" {
 					wd = filepath.Join(projDir, pCfg.WorkingDir)
 				}
-				out = append(out, ipc.ProcessInfo{
+				out = append(out, ipc.Process{
+					Key:          name + "/" + pName,
 					Project:      name,
 					Process:      pName,
 					Status:       "stopped",
@@ -508,12 +589,16 @@ func (m *Manager) PS() []ipc.ProcessInfo {
 				})
 			}
 		} else {
+			if seen[name] {
+				continue
+			}
 			var firstPort int
 			for _, p := range cfg.Ports {
 				firstPort = p
 				break
 			}
-			out = append(out, ipc.ProcessInfo{
+			out = append(out, ipc.Process{
+				Key:          name,
 				Project:      name,
 				Status:       "stopped",
 				DeclaredPort: firstPort,
@@ -711,33 +796,14 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var statuses []ipc.ProcessStatus
+	var out []ipc.Process
 	for key, proc := range m.processes {
-		parts := strings.SplitN(key, "/", 2)
-		if parts[0] != projectName {
+		if strings.SplitN(key, "/", 2)[0] != projectName {
 			continue
 		}
-		uptime := ""
-		if proc.Status() == StatusRunning {
-			uptime = formatDuration(time.Since(proc.StartedAt()))
-			m.metrics.Update(key, proc.PID())
-		}
-		snap := m.metrics.Get(key)
-		errCount := len(m.errRing.RecentForKey(key, 50))
-		statuses = append(statuses, ipc.ProcessStatus{
-			Key:         key,
-			Status:      string(proc.Status()),
-			PID:         proc.PID(),
-			Uptime:      uptime,
-			Restarts:    proc.Restarts(),
-			MemMB:       snap.MemMB,
-			CPUPercent:  snap.CPUPercent,
-			ActualPorts: ActualPorts(proc.PID(), proc.PGID()),
-			ErrorCount:  errCount,
-			LogPath:     m.logPath(key),
-		})
+		out = append(out, m.processRecordLocked(key, proc))
 	}
-	return ipc.StatusResult{Processes: statuses}
+	return ipc.StatusResult{Processes: out}
 }
 
 // ActualPorts returns TCP listening ports for a process and all its children.

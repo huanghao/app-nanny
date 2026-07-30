@@ -212,7 +212,7 @@ function applyH(h) {
 // ── Daemon version ───────────────────────────────────────────────────────────
 async function loadVersion() {
   try {
-    const r = await fetch('/api/version');
+    const r = await fetch('/api/v1/version');
     const d = await r.json();
     document.getElementById('daemon-version').textContent = 'v' + d.version;
   } catch(e) {}
@@ -348,7 +348,7 @@ let cfgData = null;
 let cfgShowingDisk = false;
 
 async function showCfg(project) {
-  const r = await fetch('/api/config/' + project);
+  const r = await fetch('/api/v1/config/' + project);
   cfgData = await r.json();
   cfgShowingDisk = false;
   renderCfg(project);
@@ -600,7 +600,7 @@ function bindProjectEvents() {
 // ── Project list ─────────────────────────────────────────────────────────────
 async function loadPS() {
   try {
-    const r = await fetch('/api/ps');
+    const r = await fetch('/api/v1/ps');
     const data = await r.json();
     const processes = data.processes || [];
 
@@ -631,8 +631,8 @@ function ackErr(key) {
 async function doAction(key, act) {
   const parts = key.split('/');
   const url = parts.length === 2
-    ? `/api/${parts[0]}/${parts[1]}/${act}`
-    : `/api/${key}/${act}`;
+    ? `/api/v1/${parts[0]}/${parts[1]}/${act}`
+    : `/api/v1/${key}/${act}`;
   await fetch(url, { method: 'POST' });
   setTimeout(loadPS, 400);
 }
@@ -649,7 +649,7 @@ function streamLogs(key) {
   renderProjects(latestProcesses);
 
   const sseKey = key.replace('/', '-');
-  eventSource = new EventSource('/api/logs/' + sseKey + '/stream');
+  eventSource = new EventSource('/api/v1/logs/' + sseKey + '/stream');
   eventSource.onmessage = e => {
     const line = document.createElement('div');
     if (e.data.includes('──────────'))         line.className = 'sep';
