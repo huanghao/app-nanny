@@ -27,6 +27,10 @@ func SetVersion(version, commit string) {
 
 // Run is the daemon entry point. It blocks until SIGTERM or SIGINT.
 func Run(socketPath, dataDir string) error {
+	// Daemon may be launched by launchd with a bare PATH; make user
+	// toolchains (go/bun/node/…) resolvable for managed commands.
+	ensureToolPath()
+
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}

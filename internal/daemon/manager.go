@@ -381,6 +381,11 @@ func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string)
 	m.mu.Unlock()
 
 	proc := NewProcess(name, config.ProcessConfig{Command: cfg.Command}, dir)
+	m.mu.Lock()
+	if old, ok := m.processes[name]; ok {
+		proc.SetRestarts(old.Restarts())
+	}
+	m.mu.Unlock()
 	if err := os.MkdirAll(m.logDir, 0755); err == nil {
 		logPath := m.logPath(name)
 		needSep := fileHasContent(logPath)
@@ -439,6 +444,11 @@ func (m *Manager) startModeB(projectName, processName string, cfg *config.Projec
 			workDir = filepath.Join(dir, pCfg.WorkingDir)
 		}
 		proc := NewProcess(key, pCfg, workDir)
+		m.mu.Lock()
+		if old, ok := m.processes[key]; ok {
+			proc.SetRestarts(old.Restarts())
+		}
+		m.mu.Unlock()
 		if err := os.MkdirAll(m.logDir, 0755); err == nil {
 			logPath := m.logPath(key)
 			needSep := fileHasContent(logPath)
@@ -761,11 +771,20 @@ func (m *Manager) onCrash(key string, cfg *config.ProjectConfig) {
 	if !ok || cfg.Restart == "never" {
 		return
 	}
-	if cfg.MaxRestarts > 0 && proc.Restarts() >= cfg.MaxRestarts {
+	// A process that ran stably for a while earns a fresh restart budget —
+	// its crash is a new incident, not a crash loop.
+	if time.Since(proc.StartedAt()) > time.Minute {
+		proc.SetRestarts(0)
+	}
+	restarts := proc.Restarts()
+	if cfg.MaxRestarts > 0 && restarts >= cfg.MaxRestarts {
+		log.Printf("process %q: crashed %d times in a row, giving up (max_restarts=%d) — restart it manually", key, restarts, cfg.MaxRestarts)
 		return
 	}
+	delay := restartBackoff(restarts)
+	log.Printf("process %q: restart #%d in %s", key, restarts+1, delay)
 	go func() {
-		time.Sleep(1 * time.Second)
+		time.Sleep(delay)
 		parts := strings.SplitN(key, "/", 2)
 		project := parts[0]
 		process := ""
@@ -775,6 +794,19 @@ func (m *Manager) onCrash(key string, cfg *config.ProjectConfig) {
 		proc.IncrRestarts()
 		_ = m.Start(project, process)
 	}()
+}
+
+// restartBackoff returns the delay before restart attempt n (0-based):
+// 1s, 2s, 4s, … capped at 60s.
+func restartBackoff(n int) time.Duration {
+	if n > 6 {
+		n = 6 // avoid shift overflow; 64s is past the cap anyway
+	}
+	d := time.Second << n
+	if d > 60*time.Second {
+		d = 60 * time.Second
+	}
+	return d
 }
 
 func formatDuration(d time.Duration) string {

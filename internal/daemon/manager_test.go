@@ -234,3 +234,44 @@ command = "sleep 60"`)
 }
 
 var _ = time.Second // keep time import used
+
+func TestManager_CrashLoopGivesUpAtMaxRestarts(t *testing.T) {
+	m, dir := setupManager(t)
+	projDir := writeProjectToml(t, dir, `
+name = "crasher"
+command = "exit 1"
+max_restarts = 2
+`)
+	if err := m.Add("crasher", projDir); err != nil {
+		t.Fatalf("Add error: %v", err)
+	}
+	if err := m.Start("crasher", ""); err != nil {
+		t.Fatalf("Start error: %v", err)
+	}
+	defer m.Stop("crasher", "")
+
+	// Backoff: restart #1 after 1s, #2 after another 2s, then give up.
+	restarts := func() int {
+		for _, info := range m.PS() {
+			if info.Project == "crasher" {
+				return info.Restarts
+			}
+		}
+		return -1
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if restarts() >= 2 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if got := restarts(); got != 2 {
+		t.Fatalf("restarts = %d, want 2 after backoff window", got)
+	}
+	// Stay past another backoff window: a 3rd restart must not happen.
+	time.Sleep(5 * time.Second)
+	if got := restarts(); got != 2 {
+		t.Fatalf("restarts = %d, want 2 — kept restarting past max_restarts", got)
+	}
+}

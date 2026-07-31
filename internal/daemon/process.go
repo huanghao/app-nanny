@@ -274,6 +274,16 @@ func (p *Process) IncrRestarts() {
 	p.restarts++
 }
 
+// SetRestarts carries the restart count over from a previous Process
+// instance. Manager.Start re-creates the Process on every (re)start, so
+// without this the crash-loop counter would reset to 0 on each cycle and
+// max_restarts / backoff could never take effect.
+func (p *Process) SetRestarts(n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.restarts = n
+}
+
 // WorkDir returns the working directory this process runs in.
 func (p *Process) WorkDir() string {
 	p.mu.Lock()
