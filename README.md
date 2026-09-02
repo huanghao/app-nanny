@@ -97,12 +97,14 @@ port        = 3011
 | `restart` | 顶层 | 崩溃后重启策略：`"on-failure"` / `"always"` / `"never"` | `"on-failure"` |
 | `max_restarts` | 顶层 | 最多重启次数，防止无限循环 | `5` |
 | `autostart` | 顶层 | daemon 启动时自动拉起此服务 | `false` |
+| `otel_service_name` | 顶层 (Mode A) | 接入本地 otel（见 `otel/README.md`），自动注入 `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_PROTOCOL` | — |
 | `[ports]` | Mode A | 环境变量名 → 端口号，启动时注入 | — |
 | `[processes.<name>]` | Mode B | 独立进程定义 | — |
 | `command` | Mode B 进程 | 该进程的启动命令 | 必填 |
 | `port` | Mode B 进程 | 声明端口，冲突检测 + 注入为 `PORT=<port>` | — |
 | `working_dir` | Mode B 进程 | 相对项目根目录的工作目录 | 项目根目录 |
 | `memory_warn_mb` | Mode B 进程 | 内存超限告警阈值（MB） | — |
+| `otel_service_name` | Mode B 进程 | 同上，每个 process 独立声明 | — |
 
 ### 自定义错误检测规则
 

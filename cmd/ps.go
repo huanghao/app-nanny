@@ -35,15 +35,19 @@ var psCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "PROJECT\tPROCESS\tSTATUS\tPID\tUPTIME\tRESTARTS\tPORTS")
+		fmt.Fprintln(w, "PROJECT\tPROCESS\tSTATUS\tPID\tUPTIME\tRESTARTS\tPORTS\tOTEL")
 		for _, p := range result.Processes {
 			process := p.Process
 			if process == "" {
 				process = "-"
 			}
 			ports := formatPorts(p.DeclaredPort, p.ActualPorts)
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%d\t%s\n",
-				p.Project, process, p.Status, p.PID, p.Uptime, p.Restarts, ports)
+			otel := p.OtelService
+			if otel == "" {
+				otel = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\n",
+				p.Project, process, p.Status, p.PID, p.Uptime, p.Restarts, ports, otel)
 		}
 		return w.Flush()
 	},

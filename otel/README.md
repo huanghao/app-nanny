@@ -38,6 +38,22 @@ nanny status otel
 
 ## 接入方法（各项目自己改）
 
+### 项目本身被 nanny 管理（推荐）
+
+在项目的 `app-nanny.toml` 里，对应的顶层配置（Mode A）或 `[processes.<name>]`（Mode B）加一行 `otel_service_name`：
+
+```toml
+[processes.ts]
+command           = "npx tsx index.ts"
+otel_service_name = "my-service-ts"
+```
+
+nanny 启动这个进程时会自动注入 `OTEL_SERVICE_NAME` / `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` 三个标准环境变量（值见 `internal/config/project.go` 的 `LocalOtelEndpoint`），不用在 `command` 里手写、也不用担心端口以后改了要挨个项目改。语言自己的自动埋点入口（Node 的 `NODE_OPTIONS='--import @opentelemetry/auto-instrumentations-node/register'`、Python 的 `opentelemetry-instrument` 前缀）该怎么写还是怎么写，只是不用再手动拼那三个 OTEL_EXPORTER_OTLP_* 了。参考实际例子：`kolab/app-nanny.toml`（ts + py 两个 process 都接了）。
+
+`nanny ps` 会有一列 `OTEL`，显示每个进程声明的 `otel_service_name`（没声明就是 `-`）——这是"声明接入"，见下面「服务发现」一节。
+
+### 项目不受 nanny 管理，或想手动控制
+
 给你的服务加这几个环境变量（换成自己的 `OTEL_SERVICE_NAME`），大多数语言的 OTel SDK 会自动读取：
 
 ```bash
@@ -61,6 +77,44 @@ Go：用 `go.opentelemetry.io/otel` + `otlptracehttp`/`otlpmetrichttp` exporter�
 接入后打开 http://localhost:3080/explore 选对应 datasource（Tempo/Loki/Prometheus/Pyroscope，均已预置好，不用自己配）。
 
 **没有默认脱敏**：这是本地单容器，不像 mnl-otel 有 Collector 层做 Authorization/Cookie/body 剥离。本地环境本来风险就低，但如果服务连了真实第三方密钥或生产数据，自己在埋点前避免把敏感值塞进 trace attribute。
+
+## 服务发现：谁知道谁接入了
+
+三层都可选，互不强依赖——这是设计的核心约束，不是偶然结果：
+
+```
+nanny 本体  ──不依赖──>  otel/ 项目
+   ▲                        ▲
+   │ 声明(toml)              │ 推送(OTLP，失败即丢，不阻塞)
+   │                        │
+业务项目 ───────可选接入──────┘
+```
+
+**1. nanny 知道 otel 的存在，但不依赖它。**
+`otel/` 就是普通一个 nanny 项目（`otel/app-nanny.toml`），跟 kolab、md-viewer 地位相同。nanny 核心功能（进程管理、端口、日志）不 import 任何 otel/Grafana 相关代码，唯一的耦合点是 `internal/config.LocalOtelEndpoint` 这个常量——业务进程声明接入时，nanny 用它来注入环境变量。otel 没启动，这个常量还在，只是没人监听那个端口，SDK 的推送请求会直接失败——见下一条。
+
+**2. 业务服务知道自己接入了 otel，靠的是它自己的 `app-nanny.toml`。**
+跟它已经知道"自己被 nanny 管理"是同一个机制：这些信息不在某个隐藏配置里，就在项目根目录这一个文件里，agent/人读一遍就知道。`otel_service_name` 字段就是这个声明——出现在某个 process 上，说明"这个进程的目标是把数据发到本地 otel"，跟 otel 此刻是否真的在跑无关（声明的是意图，不是实时状态）。
+
+**3. `otel` 起不起，不该影响业务服务能不能跑。**
+这不是 nanny 要去保证的事，是 OTel SDK 的标准行为：exporter 是异步推送（BatchSpanProcessor/PeriodicExportingMetricReader），网络请求失败就在后台丢弃/重试，不会阻塞业务请求路径，也不会让进程在启动时因为连不上 collector 而挂掉。`otel_service_name` 声明 + nanny 注入的环境变量只是告诉 SDK "有地方就往这发"，不建立任何启动时的健康检查或强依赖。kolab 的 ts/py 两个 process 都是这个模式，多次重启 nanny/otel 互不影响对方能不能起来。
+
+**4. nanny 知道哪些受管服务"声明接入"了，但不知道数据是不是真的在流动。**
+`nanny ps` 的 `OTEL` 列，读的是所有已注册项目 toml 里的 `otel_service_name`，静态声明，otel 有没有跑都能看到——这一步不需要 otel 处于运行状态，因为它只是读文件，不发网络请求：
+
+```bash
+nanny ps    # OTEL 列非 "-" 的就是声明接入的
+```
+
+"声明接入" ≠ "数据在流动"：进程可能声明了但从没跑起来过、埋点写错了、或者最近没触发流量。要确认数据真的到了，得反过来问 otel 自己（Grafana 的 datasource proxy 查 Prometheus/Tempo/Loki 有没有这个 service_name 的新鲜数据）——这一步只在 otel 处于运行状态时才有意义，nanny 的 Go 代码里没有内置这个查询（不想让 nanny 核心依赖 Grafana HTTP API），按需手动查：
+
+```bash
+# otel 必须是 running 状态（nanny status otel 确认）
+curl -s -u admin:admin -G "http://localhost:3080/api/datasources/proxy/uid/prometheus/api/v1/query" \
+  --data-urlencode 'query=count by(__name__)({service_name="my-service"})'
+```
+
+一句话总结这四层的边界：**声明是静态的（读 toml，随时可查），数据流动是动态的（问 otel，otel 得先起来）**——两者故意不合并成一个状态，因为合并了就意味着 nanny 的 `ps` 输出会依赖 otel 是否在跑，破坏了"otel 只是可选项目"这条设计前提。
 
 ## 维护
 

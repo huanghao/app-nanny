@@ -46,6 +46,7 @@ type Process struct {
 	Restarts      int     `json:"restarts"`
 	DeclaredPort  int     `json:"declared_port"`
 	ActualPorts   []int   `json:"actual_ports"`
+	OtelService   string  `json:"otel_service,omitempty"`
 	MemMB         float64 `json:"mem_mb"`
 	CPUPercent    float64 `json:"cpu_percent"`
 	WorkDir       string  `json:"work_dir"`

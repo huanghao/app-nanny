@@ -404,6 +404,11 @@ func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string)
 	for k, v := range cfg.Ports {
 		env[k] = fmt.Sprintf("%d", v)
 	}
+	if cfg.OtelService != "" {
+		env["OTEL_SERVICE_NAME"] = cfg.OtelService
+		env["OTEL_EXPORTER_OTLP_ENDPOINT"] = config.LocalOtelEndpoint
+		env["OTEL_EXPORTER_OTLP_PROTOCOL"] = config.LocalOtelProtocol
+	}
 	proc.SetEnv(env)
 	proc.SetOnCrash(func(key string) { m.onCrash(key, cfg) })
 
@@ -463,7 +468,13 @@ func (m *Manager) startModeB(projectName, processName string, cfg *config.Projec
 				m.mu.Unlock()
 			}
 		}
-		proc.SetEnv(map[string]string{"PORT": fmt.Sprintf("%d", pCfg.Port)})
+		env := map[string]string{"PORT": fmt.Sprintf("%d", pCfg.Port)}
+		if pCfg.OtelService != "" {
+			env["OTEL_SERVICE_NAME"] = pCfg.OtelService
+			env["OTEL_EXPORTER_OTLP_ENDPOINT"] = config.LocalOtelEndpoint
+			env["OTEL_EXPORTER_OTLP_PROTOCOL"] = config.LocalOtelProtocol
+		}
+		proc.SetEnv(env)
 		proc.SetOnCrash(func(k string) { m.onCrash(k, cfg) })
 		if err := proc.Start(); err != nil {
 			return fmt.Errorf("start %s: %w", key, err)
@@ -545,6 +556,7 @@ func (m *Manager) processRecordLocked(key string, proc *Process) ipc.Process {
 		Restarts:      proc.Restarts(),
 		DeclaredPort:  m.declaredPortForKey(key),
 		ActualPorts:   m.ports.ActualPorts(proc.PID(), proc.PGID()),
+		OtelService:   m.otelServiceNameForKey(key),
 		MemMB:         snap.MemMB,
 		CPUPercent:    snap.CPUPercent,
 		WorkDir:       proc.WorkDir(),
@@ -762,6 +774,22 @@ func (m *Manager) declaredPortForKey(key string) int {
 		return port
 	}
 	return 0
+}
+
+// otelServiceNameForKey returns the declared otel_service_name for a process
+// key, or "" if that process hasn't opted in. This reflects the toml
+// declaration only — not whether otel/ is running or data is actually
+// flowing (see otel/README.md for how to check that).
+func (m *Manager) otelServiceNameForKey(key string) string {
+	parts := strings.SplitN(key, "/", 2)
+	cfg := m.configs[parts[0]]
+	if cfg == nil {
+		return ""
+	}
+	if len(parts) == 2 {
+		return cfg.Processes[parts[1]].OtelService
+	}
+	return cfg.OtelService
 }
 
 func (m *Manager) onCrash(key string, cfg *config.ProjectConfig) {

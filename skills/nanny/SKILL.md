@@ -74,7 +74,8 @@ Mode B 每个进程有独立日志、独立状态，可以单独重启。
 | `max_restarts` | 最多重启次数（默认 5） |
 | `autostart` | daemon 启动时自动拉起（默认 false） |
 | `[ports]` | Mode A 的环境变量注入，键=变量名，值=端口号 |
-| `[processes.<name>]` | Mode B 子进程，有 command/port/working_dir/memory_warn_mb |
+| `[processes.<name>]` | Mode B 子进程，有 command/port/working_dir/memory_warn_mb/otel_service_name |
+| `otel_service_name` | 接入本地 otel（见 otel/README.md），自动注入 OTEL_* 环境变量；`nanny ps` 的 OTEL 列显示声明情况 |
 
 ## 端口规律（本机约定）
 
