@@ -116,11 +116,32 @@ curl -s -u admin:admin -G "http://localhost:3080/api/datasources/proxy/uid/prome
 
 一句话总结这四层的边界：**声明是静态的（读 toml，随时可查），数据流动是动态的（问 otel，otel 得先起来）**——两者故意不合并成一个状态，因为合并了就意味着 nanny 的 `ps` 输出会依赖 otel 是否在跑，破坏了"otel 只是可选项目"这条设计前提。
 
-## 维护
+## 数据规模控制（不让它把本地拖垮）
 
-- **镜像更新**：`docker pull grafana/otel-lgtm:latest`，然后 `nanny stop otel && docker rm lgtm && nanny start otel`（会用新镜像重建容器，`lgtm-data` volume 数据保留）。
-- **磁盘占用**：数据在 named volume `lgtm-data`，实测 5 天写入量约 450MB。镜像默认配置没有显式设置 retention（用各组件默认值），本地长期挂着会持续增长。定期看一眼：`docker exec lgtm du -sh /data`；占用过大就整体清空：`nanny stop otel && docker rm lgtm && docker volume rm lgtm-data`（**丢历史数据**，下次 `nanny start otel` 会重新创建空容器）。
-- **完全卸载**：`nanny stop otel && nanny remove otel && docker rm lgtm && docker volume rm lgtm-data`。
+本地持续写入，不加限制的话数据只会一直涨。四个存储后端都已经在 `run.sh` 里配了约 7 天的保留窗口，稳定运行后磁盘占用会趋于稳定（老数据被后端自己的 compactor/retention 机制清掉），不用人工定期清理：
+
+| 后端 | 怎么限的 | 备注 |
+|---|---|---|
+| Prometheus | `PROMETHEUS_EXTRA_ARGS`：`--storage.tsdb.retention.time=7d --storage.tsdb.retention.size=2GB` | 时间和大小任一超限先触发 |
+| Loki | `config/loki-config.yaml` 里加的 `compactor`/`limits_config`（镜像默认**完全没配 retention**，不加这个会一直攒） | 镜像默认没有 `compactor:` 段，必须整段自己补，改完用 `-verify-config` 校验过 |
+| Pyroscope | `PYROSCOPE_EXTRA_ARGS`：`-retention-period=168h` | — |
+| Tempo | 不管，用镜像自带默认值（`tempo --help` 确认 `block-retention` 默认 `336h0m0s`，即 14 天） | Tempo 3.x 的 config schema 里已经没有旧版 `compactor:` 顶层字段了，硬加会导致解析报错、容器起不来（踩过一次坑，见下）；14 天本身就是够用的下限，没必要为了改到 7 天冒这个险 |
+
+Prometheus/Pyroscope 用的是启动参数（`*_EXTRA_ARGS`），Loki 用的是整份配置文件覆盖（镜像里没暴露对应 CLI flag），两种机制不一样，改的时候留意别混。
+
+**踩过的坑**：第一版想把 Tempo 也按同样思路加 `compactor: compaction: block_retention: 168h` 到配置文件，结果容器起不来，日志是 `Error: Tempo exited before becoming ready`，nanny 因为 `restart = on-failure` 一直重试到 `max_restarts` 才停下（`nanny status otel` 会显示 `crashed`）。单独拉起 Tempo 二进制排查才看到根因：`failed parsing config: ... field compactor not found in type app.Config`——这个镜像版本的 Tempo（3.0.3）配置结构已经变了，不能照抄旧文档里的写法。教训：**改这类 all-in-one 镜像的组件配置前，先用 `docker run --rm --entrypoint <bin> <image> -config.file=... -verify-config`（Loki 支持）或单独起一下这个组件（Tempo 不支持 `-verify-config`，只能真跑一次看报错）单独验证，不要直接改完就让 nanny 拉起整个栈去踩** ——整栈是一个 Mode A 进程，任何一个组件配置错都会让 `run-all.sh` 整体退出，殃及其它已经工作正常的组件。
+
+**手动检查磁盘占用**（无论有没有触发 retention，想确认现状随时可以看）：
+
+```bash
+docker exec lgtm du -sh /data
+```
+
+**镜像更新**：`docker pull grafana/otel-lgtm:latest`，然后 `nanny stop otel && docker rm lgtm && nanny start otel`（会用新镜像重建容器，`lgtm-data` volume 数据保留，`run.sh` 里的 mount/参数照常生效）。
+
+**还是想彻底清空重来**：`nanny stop otel && docker rm lgtm && docker volume rm lgtm-data`（**丢历史数据**，下次 `nanny start otel` 重新创建空容器）。
+
+**完全卸载**：`nanny stop otel && nanny remove otel && docker rm lgtm && docker volume rm lgtm-data`。
 
 ## 已知偏差 / 历史
 

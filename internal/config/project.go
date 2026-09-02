@@ -9,15 +9,15 @@ import (
 
 // ProjectConfig is the parsed content of an app-nanny.toml file.
 type ProjectConfig struct {
-	Name          string                    `toml:"name"`
-	Command       string                    `toml:"command"`
-	AutoStart     bool                      `toml:"autostart"`
-	Restart       string                    `toml:"restart"`      // "always"|"on-failure"|"never"
-	MaxRestarts   int                       `toml:"max_restarts"`
-	Ports         map[string]int            `toml:"ports"`        // Mode A: env_var -> port number
-	Processes     map[string]ProcessConfig  `toml:"processes"`    // Mode B: name -> config
-	ErrorPatterns []ErrorPattern            `toml:"error_patterns"`
-	OtelService   string                    `toml:"otel_service_name"` // Mode A: opt-in to local otel (see otel/README.md)
+	Name          string                   `toml:"name"`
+	Command       string                   `toml:"command"`
+	AutoStart     bool                     `toml:"autostart"`
+	Restart       string                   `toml:"restart"` // "always"|"on-failure"|"never"
+	MaxRestarts   int                      `toml:"max_restarts"`
+	Ports         map[string]int           `toml:"ports"`     // Mode A: env_var -> port number
+	Processes     map[string]ProcessConfig `toml:"processes"` // Mode B: name -> config
+	ErrorPatterns []ErrorPattern           `toml:"error_patterns"`
+	OtelService   string                   `toml:"otel_service_name"` // Mode A: opt-in to local otel (see otel/README.md)
 }
 
 // ProcessConfig is one entry under [processes.<name>] in Mode B.
