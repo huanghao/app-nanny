@@ -176,3 +176,13 @@ md-viewer-server.log
 ```
 
 单文件上限 50MB，保留 3 个备份文件，共约 150MB/服务。
+
+## 本地可观测性栈（otel/）
+
+`otel/` 是 nanny 自己管理的一个本地 Grafana/Prometheus/Tempo/Loki/Pyroscope all-in-one 容器（[grafana/otel-lgtm](https://github.com/grafana/docker-otel-lgtm)），给本地服务提供 trace/log/metric 查看入口。默认不启动，也不强制任何项目接入。
+
+```bash
+nanny start otel        # 启动（首次会自动创建容器）
+```
+
+想让自己的服务接入，看 `otel/README.md`——里面有端口、Grafana 地址、各语言的接入环境变量、维护和卸载方法。
