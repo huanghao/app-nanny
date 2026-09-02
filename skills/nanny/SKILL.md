@@ -77,6 +77,10 @@ Mode B 每个进程有独立日志、独立状态，可以单独重启。
 | `[processes.<name>]` | Mode B 子进程，有 command/port/working_dir/memory_warn_mb/otel_service_name |
 | `otel_service_name` | 接入本地 otel（见 otel/README.md），自动注入 OTEL_* 环境变量；`nanny ps` 的 OTEL 列显示声明情况 |
 
+## 本地可观测性栈（otel/）
+
+`otel/` 是 nanny 管理的一个本地 Grafana/Prometheus/Tempo/Loki/Pyroscope 容器（`nanny start otel`），默认不启动、不强制任何项目接入。项目要接入，在 `app-nanny.toml` 里加 `otel_service_name`（见上表），nanny 会自动注入三个 OTEL_EXPORTER_OTLP_* 环境变量。谁声明了接入看 `nanny ps` 的 OTEL 列；谁真的有数据在流动、端口/维护/卸载方法，看 `otel/README.md`（里面有「服务发现」一节讲清楚 nanny/otel/业务服务三者怎么互不强依赖）。
+
 ## 端口规律（本机约定）
 
 前端端口 = 后台端口 + 1。不同应用从 3000 开始，每个 +10。
