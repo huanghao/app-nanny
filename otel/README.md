@@ -118,16 +118,18 @@ curl -s -u admin:admin -G "http://localhost:3080/api/datasources/proxy/uid/prome
 
 ## 数据规模控制（不让它把本地拖垮）
 
-本地持续写入，不加限制的话数据只会一直涨。四个存储后端都已经在 `run.sh` 里配了约 7 天的保留窗口，稳定运行后磁盘占用会趋于稳定（老数据被后端自己的 compactor/retention 机制清掉），不用人工定期清理：
+本地持续写入，不加限制的话数据只会一直涨。四个存储后端都已经在 `run.sh` 里配了 **14 天**的保留窗口，稳定运行后磁盘占用会趋于稳定（老数据被后端自己的 compactor/retention 机制清掉），不用人工定期清理：
 
 | 后端 | 怎么限的 | 备注 |
 |---|---|---|
-| Prometheus | `PROMETHEUS_EXTRA_ARGS`：`--storage.tsdb.retention.time=7d --storage.tsdb.retention.size=2GB` | 时间和大小任一超限先触发 |
-| Loki | `config/loki-config.yaml` 里加的 `compactor`/`limits_config`（镜像默认**完全没配 retention**，不加这个会一直攒） | 镜像默认没有 `compactor:` 段，必须整段自己补，改完用 `-verify-config` 校验过 |
-| Pyroscope | `PYROSCOPE_EXTRA_ARGS`：`-retention-period=168h` | — |
-| Tempo | 不管，用镜像自带默认值（`tempo --help` 确认 `block-retention` 默认 `336h0m0s`，即 14 天） | Tempo 3.x 的 config schema 里已经没有旧版 `compactor:` 顶层字段了，硬加会导致解析报错、容器起不来（踩过一次坑，见下）；14 天本身就是够用的下限，没必要为了改到 7 天冒这个险 |
+| Prometheus | `PROMETHEUS_EXTRA_ARGS`：`--storage.tsdb.retention.time=14d --storage.tsdb.retention.size=2GB` | 时间和大小任一超限先触发，2GB 上限跟天数无关，以后接的服务变多、增长变快也不会失控 |
+| Loki | `config/loki-config.yaml` 里加的 `compactor`/`limits_config`（镜像默认**完全没配 retention**，不加这个会一直攒），`retention_period: 336h` | 镜像默认没有 `compactor:` 段，必须整段自己补，改完用 `-verify-config` 校验过 |
+| Pyroscope | `PYROSCOPE_EXTRA_ARGS`：`-retention-period=336h` | — |
+| Tempo | 不管，用镜像自带默认值（`tempo --help` 确认 `block-retention` 默认 `336h0m0s`，正好就是 14 天） | Tempo 3.x 的 config schema 里已经没有旧版 `compactor:` 顶层字段了，硬加会导致解析报错、容器起不来（踩过一次坑，见下）；默认值刚好等于目标天数，不用改 |
 
 Prometheus/Pyroscope 用的是启动参数（`*_EXTRA_ARGS`），Loki 用的是整份配置文件覆盖（镜像里没暴露对应 CLI flag），两种机制不一样，改的时候留意别混。
+
+**为什么是 14 天，不是更短**：这套栈是个人本地用，不是所有项目都天天高频跑，某段时间用得多、某段时间几乎不碰是常态——保留窗口太短容易把还想看的数据提前冲掉。用实测数据算过：`lgtm-data` volume 建于 2026-08-27，在还没加任何 retention 限制的 5.9 天里，Prometheus 涨了 137MB（23.2MB/天）、Tempo 涨了 80MB（13.6MB/天，当时只有 kolab-py/ts 两个服务在推），Loki 232KB（当时 0 个服务接 log，可忽略）；Grafana 的 155MB 和 Pyroscope 的 140MB 基本是固定开销，不随天数涨（Pyroscope 那 140MB 全是 metastore/shared 的空跑状态，没有任何服务在推 profile 数据）。按这个速率推算，14 天稳态预估约 **0.8GB**，远低于 2GB；就算以后多接几个服务、增长速率涨到现在的 3-4 倍，Prometheus 有独立的 2GB 硬上限兜底，Tempo/Loki 也还有相当裕量，不会突然把本地拖垮。
 
 **踩过的坑**：第一版想把 Tempo 也按同样思路加 `compactor: compaction: block_retention: 168h` 到配置文件，结果容器起不来，日志是 `Error: Tempo exited before becoming ready`，nanny 因为 `restart = on-failure` 一直重试到 `max_restarts` 才停下（`nanny status otel` 会显示 `crashed`）。单独拉起 Tempo 二进制排查才看到根因：`failed parsing config: ... field compactor not found in type app.Config`——这个镜像版本的 Tempo（3.0.3）配置结构已经变了，不能照抄旧文档里的写法。教训：**改这类 all-in-one 镜像的组件配置前，先用 `docker run --rm --entrypoint <bin> <image> -config.file=... -verify-config`（Loki 支持）或单独起一下这个组件（Tempo 不支持 `-verify-config`，只能真跑一次看报错）单独验证，不要直接改完就让 nanny 拉起整个栈去踩** ——整栈是一个 Mode A 进程，任何一个组件配置错都会让 `run-all.sh` 整体退出，殃及其它已经工作正常的组件。
 
