@@ -58,3 +58,4 @@ compactor:
 
 limits_config:
   retention_period: 336h # 14d
+  deletion_mode: filter-and-delete # lets /loki/api/v1/delete selectively purge one service's logs

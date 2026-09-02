@@ -16,6 +16,11 @@
 # by default, so config/loki-config.yaml (upstream config + an added
 # compactor/limits_config block) is bind-mounted over the image's own copy
 # instead.
+#
+# Selective delete: --web.enable-admin-api turns on Prometheus's
+# delete_series API, and loki-config.yaml's deletion_mode turns on Loki's
+# /loki/api/v1/delete — both let you purge one service_name's data without
+# wiping everything. See README.md "删除某个服务的数据".
 set -euo pipefail
 
 CONTAINER=lgtm
@@ -34,7 +39,7 @@ else
     -v "${VOLUME}:/data" \
     -v "${DIR}/config/loki-config.yaml:/otel-lgtm/loki-config.yaml:ro" \
     -e TEMPO_EXTRA_ARGS="--query-frontend.mcp-server.enabled=true" \
-    -e PROMETHEUS_EXTRA_ARGS="--storage.tsdb.retention.time=14d --storage.tsdb.retention.size=2GB" \
+    -e PROMETHEUS_EXTRA_ARGS="--storage.tsdb.retention.time=14d --storage.tsdb.retention.size=2GB --web.enable-admin-api" \
     -e PYROSCOPE_EXTRA_ARGS="-retention-period=336h" \
     "$IMAGE" &
 fi

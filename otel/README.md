@@ -145,6 +145,38 @@ docker exec lgtm du -sh /data
 
 **完全卸载**：`nanny stop otel && nanny remove otel && docker rm lgtm && docker volume rm lgtm-data`。
 
+## 删除某个服务的数据
+
+多个服务接进来之后，可能只想清掉其中一个的数据（换了埋点方式想重新看干净的图、某个服务是临时调试接进来的不想留痕迹），不想等 14 天，也不想把所有服务的数据一起清空。按 service_name 选择性删，**实测验证过**：
+
+```bash
+otel/delete-service-data.sh <service_name>
+```
+
+它做的事（也可以照着手动敲）：
+
+- **Prometheus**：有 admin API 支持按 label matcher 删（`run.sh` 里已加 `--web.enable-admin-api`），走 `docker exec lgtm curl`（Grafana 的 datasource proxy 会拦截非白名单的 POST，返回 `403 non allow-listed POSTs`，得绕开它直接打容器内部端口）：
+  ```bash
+  docker exec lgtm curl -X POST -G http://127.0.0.1:9090/api/v1/admin/tsdb/delete_series \
+    --data-urlencode 'match[]={service_name="my-service"}'
+  docker exec lgtm curl -X POST http://127.0.0.1:9090/api/v1/admin/tsdb/clean_tombstones
+  ```
+  第一条只打墓碑标记，第二条才真正回收磁盘——两条都要执行。**立即生效**，删完马上查不到。
+
+- **Loki**：`config/loki-config.yaml` 里加了 `limits_config.deletion_mode: filter-and-delete` 才能用这个 API（镜像默认关闭）：
+  ```bash
+  docker exec lgtm curl -G -X POST http://127.0.0.1:3100/loki/api/v1/delete \
+    --data-urlencode 'query={service_name="my-service"}' \
+    --data-urlencode "start=<unix秒>" --data-urlencode "end=<unix秒>"
+  ```
+  **不是立即生效**：Loki 出于"防手滑"设计，删除请求会先进入 `received` 状态，默认要等 `compactor.delete-request-cancel-period`（24h）过后才真正执行，这期间可以撤销：
+  ```bash
+  docker exec lgtm curl http://127.0.0.1:3100/loki/api/v1/delete                                    # 看请求状态
+  docker exec lgtm curl -X DELETE -G http://127.0.0.1:3100/loki/api/v1/delete --data-urlencode 'query={service_name="my-service"}'  # 撤销
+  ```
+
+- **Tempo / Pyroscope**：这个镜像版本**没有**按 service 选择性删除的 API（翻过 `--help` 确认，Tempo 只有跟本地无关的分布式分区清理 flag，Pyroscope 只有全局 retention，没有按 label 删的接口）。想清掉某个服务的 trace/profile，只能等 14 天保留期自然滚过，或者接受"删就是删全部"去整体清空（见上面「数据规模控制」的完全清空步骤）。这是当前镜像版本的真实限制，不是没配置到位。
+
 ## 已知偏差 / 历史
 
 这个容器最初是手动 `docker run` 起的（未纳入 nanny 前），曾设置 Docker 自身的 `--restart unless-stopped`。纳入 nanny 管理后已改为 `--restart no`（`docker update --restart=no lgtm`），避免 Docker daemon 重启时绕过 nanny 把容器拉起来，导致 nanny 里显示 stopped 但容器其实在跑的状态不一致。现在容器的启停完全由 `nanny start/stop otel` 控制。
