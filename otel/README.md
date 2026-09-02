@@ -32,6 +32,8 @@ nanny status otel
 | OTLP HTTP | localhost:4318 |
 | Tempo API（容器内部端口，宿主机映射） | localhost:3200 |
 
+`nanny logs otel` 里镜像自己打印的 "3000: Grafana (http://localhost:3000)" 说的是**容器内部端口**，跟宿主机映射（`-p 3080:3000`，见 run.sh）无关，不是真实访问地址——真实入口以上表为准。
+
 无鉴权、无网关——本地单机场景，谁都能连 localhost 就行，不要把这些端口暴露到公网/内网其它机器。
 
 ## 接入方法（各项目自己改）
