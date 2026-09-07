@@ -4,6 +4,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/huanghao/app-nanny/internal/ipc"
 	"github.com/spf13/cobra"
@@ -44,6 +45,9 @@ project deliberately opts into under logs/<project>/.`,
 		if err := json.Unmarshal(resp.Result, &result); err != nil {
 			return err
 		}
+
+		logDir := filepath.Join(DataDir(), "logs")
+		fmt.Printf("log dir: %s\n", logDir)
 
 		removeVerb, capVerb := "removed", "capped"
 		if gcDryRun {
