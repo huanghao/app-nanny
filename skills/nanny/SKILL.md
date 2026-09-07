@@ -117,6 +117,18 @@ nanny logs parquet-explorer -f        # 实时跟（-f 只支持单进程，聚�
 
 新项目接入 nanny、且有这类"nanny 管不到的进程也要写日志"的情况时，把日志路径改成这个约定位置即可，不用额外找 nanny 配置或注册——gc 只看这个路径本身,不需要声明。
 
+## 持久化数据（my-store 约定）
+
+日志之外，项目自己产出的、丢了会心疼的数据（对话记录、学习进度、annotation、素材库……）**不要**放在项目仓库自己的目录里，哪怕加了 `.gitignore`——这类目录一没留神就可能被 `git add -A` 带进版本控制，二是换机器 `git clone` 天然带不走，得额外记住去搬,过去好几个项目（kolab 的 `data/`/`logs/`、my-music-stdio 的素材库、md-viewer 的 annotation 数据库）都是各自发明了一套存放位置，事后才发现要单独处理。
+
+**约定**：持久化数据统一放 `~/workspace/my-store/<project>/` 下，项目内部想怎么分子目录（`data/`、`db/`……）自己定，nanny 不关心结构，只关心根路径在 my-store 里，不在项目仓库目录里。
+
+- 项目代码里原本"仓库根目录"起算的数据路径（比如 kolab 的 `server/paths.ts` 那种 `join(BASE, "data")`），改成 `join(homedir(), "workspace", "my-store", "<project>", "data")`，保留一个环境变量覆盖口子（测试用，参考 kolab 的 `KOLAB_DATA_DIR` 这种命名）。
+- 迁移已有项目时，把现有数据目录整个物理搬到 `my-store/<project>/` 下，仓库里的 `.gitignore` 对应条目可以删掉——数据已经不在仓库目录里，不需要靠 `.gitignore` 挡了。
+- 换机器时只需要打包 `my-store/` 整个目录带走，不用再一个个项目找它们各自的数据藏在哪。
+
+新项目接入 nanny 时，只要会产出这类数据，落地位置从一开始就该选 `my-store/<project>/`，不要图方便先放仓库里"以后再挪"。
+
 ## Web 控制台
 
 ```bash
