@@ -222,4 +222,21 @@ func registerHandlers(srv *ipc.Server, mgr ProcessManager, sigCh chan<- os.Signa
 		}
 		return mgr.DetailedStatus(p.Name), nil
 	})
+
+	srv.Handle("gc", func(params json.RawMessage) (any, error) {
+		var p ipc.GCParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, err
+		}
+		result, err := mgr.GC(p.DryRun)
+		if err != nil {
+			return nil, err
+		}
+		return ipc.GCResult{
+			RemovedLogs:         result.RemovedLogs,
+			FreedBytes:          result.FreedBytes,
+			DaemonLogCapped:     result.DaemonLogCapped,
+			DaemonLogFreedBytes: result.DaemonLogFreedBytes,
+		}, nil
+	})
 }

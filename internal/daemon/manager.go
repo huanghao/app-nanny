@@ -41,6 +41,7 @@ type ProcessManager interface {
 	ProjectToml(name string) (string, error)
 	ProjectTomlActive(name string) (content string, loadedAt time.Time)
 	ProjectTomlDiskMtime(name string) time.Time
+	GC(dryRun bool) (GCResult, error)
 }
 
 var _ ProcessManager = (*Manager)(nil)

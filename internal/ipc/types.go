@@ -127,3 +127,17 @@ type ErrorEvent struct {
 type StatusResult struct {
 	Processes []Process `json:"processes"`
 }
+
+// GCParams requests cleanup of nanny-managed disk state that isn't tied to
+// any currently registered project (orphaned log files) or has grown past
+// its cap without an active rotator (daemon.log — see internal/daemon/gc.go).
+type GCParams struct {
+	DryRun bool `json:"dry_run"` // report what would be removed without touching disk
+}
+
+type GCResult struct {
+	RemovedLogs         []string `json:"removed_logs"`           // basenames under logs/ with no owning registered project/process
+	FreedBytes          int64    `json:"freed_bytes"`            // total size of RemovedLogs
+	DaemonLogCapped     bool     `json:"daemon_log_capped"`      // whether daemon.log was over the cap
+	DaemonLogFreedBytes int64    `json:"daemon_log_freed_bytes"` // bytes trimmed from daemon.log (0 if not capped)
+}
