@@ -107,6 +107,16 @@ nanny logs parquet-explorer -f        # 实时跟（-f 只支持单进程，聚�
 
 重启时日志里会有分割线：`────────── restarted at HH:MM:SS ──────────`
 
+### 项目自己开文件写的日志（nanny 没 spawn 的进程）
+
+上面这条日志是 nanny 捕获被它拉起的进程的 stdout/stderr，自动按 50MB×3 轮转，接入 nanny 的项目不用管这部分。
+
+但有些项目还有 nanny 管不到的产出——不是 `command`/`[processes.*]` 里配的那个进程写的，而是项目自己的其他组件（配套的 GUI app、被 Chrome/其他程序拉起的辅助进程等），nanny 从没 spawn 过它们，天然看不到、也捕获不到它们的输出。这类组件如果自己 `os.OpenFile` 打日志，历史上就是没人管、一直涨（例如 context-pad 的 macOS 面板进程 `panel.log` 曾经涨到 390M）。
+
+**约定**：这类文件写到 `~/.local/share/app-nanny/logs/<project>/` 这个子目录下，文件名随意（`panel.log`、`switches.log` 都行，nanny 不关心具体名字）。`nanny gc` 会认这个位置：目录本身对应的项目还在 `registry.json` 里的话，目录内任何单个文件超过 50MB 就原地截断保留最近 10MB（不区分是不是 nanny 自己写的）；项目已经 `nanny remove` 掉了，整个子目录直接删。
+
+新项目接入 nanny、且有这类"nanny 管不到的进程也要写日志"的情况时，把日志路径改成这个约定位置即可，不用额外找 nanny 配置或注册——gc 只看这个路径本身,不需要声明。
+
 ## Web 控制台
 
 ```bash

@@ -233,10 +233,10 @@ func registerHandlers(srv *ipc.Server, mgr ProcessManager, sigCh chan<- os.Signa
 			return nil, err
 		}
 		return ipc.GCResult{
-			RemovedLogs:         result.RemovedLogs,
-			FreedBytes:          result.FreedBytes,
-			DaemonLogCapped:     result.DaemonLogCapped,
-			DaemonLogFreedBytes: result.DaemonLogFreedBytes,
+			RemovedLogs: result.RemovedLogs,
+			FreedBytes:  result.FreedBytes,
+			CappedLogs:  result.CappedLogs,
+			CappedBytes: result.CappedBytes,
 		}, nil
 	})
 }

@@ -110,35 +110,120 @@ func TestGC_CapsOversizedDaemonLog(t *testing.T) {
 	m, _, logDir := setupGCManager(t)
 
 	daemonLogPath := filepath.Join(filepath.Dir(logDir), "daemon.log")
-	// Past the 50MB cap: write a recognizable tail marker so we can assert
-	// the most recent content survives capping.
-	head := make([]byte, 45*1024*1024)
-	for i := range head {
-		head[i] = 'h'
-	}
-	tail := []byte("tail-marker")
-	padding := make([]byte, 6*1024*1024)
-	if err := os.WriteFile(daemonLogPath, append(head, append(padding, tail...)...), 0644); err != nil {
-		t.Fatalf("write daemon.log fixture: %v", err)
-	}
+	writeOversizedFixture(t, daemonLogPath)
 
 	result, err := m.GC(false)
 	if err != nil {
 		t.Fatalf("GC error: %v", err)
 	}
-	if !result.DaemonLogCapped {
-		t.Fatal("expected DaemonLogCapped = true")
+	assertCapped(t, result, "daemon.log")
+	assertTailSurvives(t, daemonLogPath)
+}
+
+// TestGC_RemovesOrphanedProjectLogDirWholesale covers the convention (see
+// nanny skill docs): a project's own log files it writes itself — not
+// through nanny's stdout capture — live under logs/<project>/. If the
+// project is no longer registered, the whole directory goes, not just
+// individually-recognized filenames (unlike the flat-file case, GC never
+// tries to validate what a project named its own files).
+func TestGC_RemovesOrphanedProjectLogDirWholesale(t *testing.T) {
+	m, _, logDir := setupGCManager(t)
+	// No project named "gone-project" is registered.
+	projLogDir := filepath.Join(logDir, "gone-project")
+	os.MkdirAll(projLogDir, 0755)
+	writeFile(t, filepath.Join(projLogDir, "panel.log"), "some content")
+	writeFile(t, filepath.Join(projLogDir, "native-host.log"), "more content")
+
+	result, err := m.GC(false)
+	if err != nil {
+		t.Fatalf("GC error: %v", err)
+	}
+	if len(result.RemovedLogs) != 1 || result.RemovedLogs[0] != "gone-project/" {
+		t.Fatalf("RemovedLogs = %v, want [\"gone-project/\"]", result.RemovedLogs)
+	}
+	if _, err := os.Stat(projLogDir); !os.IsNotExist(err) {
+		t.Errorf("gone-project/ directory should have been removed wholesale")
+	}
+}
+
+// TestGC_CapsOversizedFileInRegisteredProjectLogDir is the actual bug this
+// feature exists for: context-pad's panel.log grows unboundedly because
+// it's written by a companion macOS app nanny never spawns, so nanny's
+// per-process RotatingFile never sees it. Once context-pad follows the
+// convention and writes it under logs/context-pad/, GC caps it exactly
+// like daemon.log — nanny doesn't care that it didn't write the file.
+func TestGC_CapsOversizedFileInRegisteredProjectLogDir(t *testing.T) {
+	m, regDir, logDir := setupGCManager(t)
+	projDir := writeProjectToml(t, regDir, `
+name = "context-pad"
+command = "sleep 60"
+`)
+	if err := m.Add("context-pad", projDir); err != nil {
+		t.Fatalf("Add error: %v", err)
 	}
 
-	data, err := os.ReadFile(daemonLogPath)
+	projLogDir := filepath.Join(logDir, "context-pad")
+	os.MkdirAll(projLogDir, 0755)
+	panelLogPath := filepath.Join(projLogDir, "panel.log")
+	writeOversizedFixture(t, panelLogPath)
+	// A normal-sized sibling file must be left alone.
+	writeFile(t, filepath.Join(projLogDir, "switches.log"), "small, untouched")
+
+	result, err := m.GC(false)
 	if err != nil {
-		t.Fatalf("read capped daemon.log: %v", err)
+		t.Fatalf("GC error: %v", err)
 	}
-	if len(data) >= len(head) {
-		t.Errorf("daemon.log not shrunk: len=%d", len(data))
+	assertCapped(t, result, "context-pad/panel.log")
+	assertTailSurvives(t, panelLogPath)
+
+	data, err := os.ReadFile(filepath.Join(projLogDir, "switches.log"))
+	if err != nil || string(data) != "small, untouched" {
+		t.Errorf("switches.log should be untouched, got %q, err=%v", data, err)
 	}
+	// The registered project's directory itself must survive.
+	if _, err := os.Stat(projLogDir); err != nil {
+		t.Errorf("context-pad/ directory should survive GC: %v", err)
+	}
+}
+
+func writeOversizedFixture(t *testing.T, path string) {
+	t.Helper()
+	head := make([]byte, 45*1024*1024)
+	for i := range head {
+		head[i] = 'h'
+	}
+	padding := make([]byte, 6*1024*1024)
+	tail := []byte("tail-marker")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir for fixture %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, append(head, append(padding, tail...)...), 0644); err != nil {
+		t.Fatalf("write oversized fixture %s: %v", path, err)
+	}
+}
+
+func assertCapped(t *testing.T, result daemon.GCResult, label string) {
+	t.Helper()
+	for _, name := range result.CappedLogs {
+		if name == label {
+			return
+		}
+	}
+	t.Fatalf("CappedLogs = %v, want %q among them", result.CappedLogs, label)
+}
+
+func assertTailSurvives(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read capped file %s: %v", path, err)
+	}
+	if len(data) >= 45*1024*1024 {
+		t.Errorf("%s not shrunk: len=%d", path, len(data))
+	}
+	tail := []byte("tail-marker")
 	if string(data[len(data)-len(tail):]) != string(tail) {
-		t.Errorf("tail marker lost after capping daemon.log")
+		t.Errorf("tail marker lost after capping %s", path)
 	}
 }
 

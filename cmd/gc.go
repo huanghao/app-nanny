@@ -23,9 +23,17 @@ var gcCmd = &cobra.Command{
     exists", so these just accumulate forever otherwise.
   - daemon.log, which launchd writes to directly and nanny's rotator
     never touches, capped to its most recent ~10MB if it's grown past 50MB.
+  - anything a project writes itself under logs/<project>/ — the
+    convention for a project's own log files that nanny never captures
+    because nanny didn't spawn the writer (a companion GUI app, a
+    browser-launched helper process, …). Whole directories for projects
+    no longer registered get removed; files inside a still-registered
+    project's directory get capped the same way as daemon.log once they
+    pass 50MB, regardless of what wrote them.
 
 It never touches a project's own data (kolab's data/, md-viewer's
-annotations.db, etc.) — only nanny's own log capture.`,
+annotations.db, etc.) — only nanny's own log capture and whatever a
+project deliberately opts into under logs/<project>/.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := ipc.NewClient(SocketPath())
 		resp, err := client.Call("gc", ipc.GCParams{DryRun: gcDryRun})
@@ -45,14 +53,17 @@ annotations.db, etc.) — only nanny's own log capture.`,
 		if len(result.RemovedLogs) == 0 {
 			fmt.Println("no orphaned logs found")
 		} else {
-			fmt.Printf("%s %d orphaned log file(s), freeing %s:\n", removeVerb, len(result.RemovedLogs), formatBytes(result.FreedBytes))
+			fmt.Printf("%s %d orphaned log file(s)/dir(s), freeing %s:\n", removeVerb, len(result.RemovedLogs), formatBytes(result.FreedBytes))
 			for _, name := range result.RemovedLogs {
 				fmt.Printf("  %s\n", name)
 			}
 		}
 
-		if result.DaemonLogCapped {
-			fmt.Printf("%s daemon.log, freeing %s\n", capVerb, formatBytes(result.DaemonLogFreedBytes))
+		if len(result.CappedLogs) > 0 {
+			fmt.Printf("%s %d oversized log file(s), freeing %s:\n", capVerb, len(result.CappedLogs), formatBytes(result.CappedBytes))
+			for _, name := range result.CappedLogs {
+				fmt.Printf("  %s\n", name)
+			}
 		}
 
 		return nil
