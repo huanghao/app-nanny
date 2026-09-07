@@ -7,20 +7,23 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// ProjectConfig is the parsed content of an app-nanny.toml file.
+// ProjectConfig is the parsed content of an app-nanny.toml file. Every
+// project declares at least one [processes.<name>] block — a
+// single-process project just declares one (conventionally named "main"),
+// there is no separate flat-field shorthand for that case. (There used to
+// be one — "Mode A" — see git history around the "unify to one mode"
+// refactor; it doubled every code path that touches a process's config,
+// for an ergonomics win only the project's own toml author ever saw.)
 type ProjectConfig struct {
 	Name          string                   `toml:"name"`
-	Command       string                   `toml:"command"`
 	AutoStart     bool                     `toml:"autostart"`
 	Restart       string                   `toml:"restart"` // "always"|"on-failure"|"never"
 	MaxRestarts   int                      `toml:"max_restarts"`
-	Ports         map[string]int           `toml:"ports"`     // Mode A: env_var -> port number
-	Processes     map[string]ProcessConfig `toml:"processes"` // Mode B: name -> config
+	Processes     map[string]ProcessConfig `toml:"processes"`
 	ErrorPatterns []ErrorPattern           `toml:"error_patterns"`
-	OtelService   string                   `toml:"otel_service_name"` // Mode A: opt-in to local otel (see otel/README.md)
 }
 
-// ProcessConfig is one entry under [processes.<name>] in Mode B.
+// ProcessConfig is one entry under [processes.<name>].
 type ProcessConfig struct {
 	Command      string `toml:"command"`
 	Port         int    `toml:"port"`
@@ -57,8 +60,8 @@ func LoadProject(path string) (*ProjectConfig, error) {
 	if cfg.Name == "" {
 		return nil, fmt.Errorf("%s: 'name' is required", path)
 	}
-	if cfg.Command == "" {
-		cfg.Command = "just dev"
+	if len(cfg.Processes) == 0 {
+		return nil, fmt.Errorf("%s: at least one [processes.<name>] block is required", path)
 	}
 	if cfg.Restart == "" {
 		cfg.Restart = "on-failure"
@@ -69,17 +72,9 @@ func LoadProject(path string) (*ProjectConfig, error) {
 	return &cfg, nil
 }
 
-// IsModeB reports whether this config uses fine-grained process definitions.
-func (c *ProjectConfig) IsModeB() bool {
-	return len(c.Processes) > 0
-}
-
 // DeclaredPorts returns all port numbers declared in this config.
 func (c *ProjectConfig) DeclaredPorts() []int {
 	var ports []int
-	for _, p := range c.Ports {
-		ports = append(ports, p)
-	}
 	for _, proc := range c.Processes {
 		if proc.Port > 0 {
 			ports = append(ports, proc.Port)

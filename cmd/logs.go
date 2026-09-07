@@ -45,7 +45,7 @@ var logsCmd = &cobra.Command{
 		}
 
 		if result.Path == "" {
-			// Mode B project with multiple processes — can't tail one file
+			// Project declares more than one process — can't tail one file
 			if len(result.SubKeys) > 0 {
 				fmt.Fprintf(os.Stderr, "Cannot follow logs for the whole project. Specify a process:\n")
 				for _, k := range result.SubKeys {

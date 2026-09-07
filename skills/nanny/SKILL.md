@@ -35,22 +35,18 @@ daemon stop 不会杀死服务，只停止管理进程本身。
 
 ### app-nanny.toml 配置
 
-每个项目根目录放一个 `app-nanny.toml`。
-
-#### Mode A：单进程
+每个项目根目录放一个 `app-nanny.toml`。不管项目只有一个进程还是好几个，都用同一种写法——`[processes.<name>]`，至少声明一个。单进程项目按惯例把它叫 `main`：
 
 ```toml
 name    = "my-server"
-command = ".venv/bin/uvicorn main:app --reload --port ${PORT:-3030}"
 restart = "on-failure"
 
-[ports]
-PORT = 3030
+[processes.main]
+command = "uvicorn main:app --reload --port ${PORT:-3030}"
+port    = 3030
 ```
 
-顶层字段必须放在 `[ports]` 之前。`${PORT:-3030}` 表示优先使用 nanny 注入的环境变量，默认 3030。
-
-#### Mode B：多进程（前后端分离）
+多进程（比如前后端分离）就是再加一个 `[processes.<name>]` 块，没有额外语法：
 
 ```toml
 name    = "my-app"
@@ -66,19 +62,17 @@ working_dir = "frontend"   # 相对项目根目录
 port        = 3021
 ```
 
-Mode B 每个进程有独立日志、独立状态，可以单独重启。
+每个进程有独立日志、独立状态，可以单独重启（`nanny restart my-app/backend`）；对声明了唯一一个进程的项目，`nanny logs my-server`/`nanny start my-server` 这类不带进程名的命令会自动落到那一个进程上，不用打 `/main`。
 
 #### 所有配置项
 
 | 字段 | 说明 |
 |---|---|
 | `name` | 项目名，唯一标识 |
-| `command` | 启动命令（Mode A，默认 `"just dev"`） |
 | `restart` | `"on-failure"` / `"always"` / `"never"` |
 | `max_restarts` | 最多重启次数（默认 5） |
 | `autostart` | daemon 启动时自动拉起（默认 false） |
-| `[ports]` | Mode A 的环境变量注入，键=变量名，值=端口号 |
-| `[processes.<name>]` | Mode B 子进程，有 command/port/working_dir/memory_warn_mb/otel_service_name |
+| `[processes.<name>]` | 至少一个；字段有 command/port/working_dir/memory_warn_mb/otel_service_name |
 | `otel_service_name` | 接入本地 otel（见下一节），自动注入 OTEL_* 环境变量；`nanny ps` 的 OTEL 列显示声明情况 |
 
 ### 端口规律（本机约定）
@@ -155,7 +149,7 @@ nanny dashboard    # 打开 http://localhost:7070
 ## 常见操作流程
 
 **在新项目里接入 nanny：**
-1. 在项目根目录写 `app-nanny.toml`（参考「接入约定」的 Mode A/B 示例），需要的话按约定接好日志/持久化数据路径
+1. 在项目根目录写 `app-nanny.toml`（参考「接入约定」的示例），需要的话按约定接好日志/持久化数据路径
 2. `nanny add .`
 3. `nanny start <name>`
 

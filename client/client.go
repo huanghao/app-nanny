@@ -188,7 +188,7 @@ func (c *Client) Status(ctx context.Context, name string) ([]Process, error) {
 }
 
 // Start starts a registered project, or one named process within it
-// (process == "" starts every process for a Mode B project).
+// (process == "" starts every process the project declares).
 func (c *Client) Start(ctx context.Context, project, process string) error {
 	return c.post(ctx, actionPath(project, process, "start"), nil, nil)
 }

@@ -19,16 +19,16 @@ func writeToml(t *testing.T, content string) string {
 	return path
 }
 
-func TestLoadProject_ModeA(t *testing.T) {
+func TestLoadProject_SingleProcess(t *testing.T) {
 	path := writeToml(t, `
 name = "parquet-explorer"
 autostart = false
 restart = "on-failure"
 max_restarts = 5
 
-[ports]
-PORT = 5001
-VITE_PORT = 5173
+[processes.main]
+command = "npx vite --port ${PORT:-5001}"
+port = 5001
 `)
 	cfg, err := config.LoadProject(path)
 	if err != nil {
@@ -37,18 +37,15 @@ VITE_PORT = 5173
 	if cfg.Name != "parquet-explorer" {
 		t.Errorf("Name = %q, want %q", cfg.Name, "parquet-explorer")
 	}
-	if cfg.Ports["PORT"] != 5001 {
-		t.Errorf("Ports[PORT] = %d, want 5001", cfg.Ports["PORT"])
+	if len(cfg.Processes) != 1 {
+		t.Fatalf("Processes len = %d, want 1", len(cfg.Processes))
 	}
-	if cfg.Ports["VITE_PORT"] != 5173 {
-		t.Errorf("Ports[VITE_PORT] = %d, want 5173", cfg.Ports["VITE_PORT"])
-	}
-	if len(cfg.Processes) != 0 {
-		t.Errorf("Processes should be empty for Mode A")
+	if cfg.Processes["main"].Port != 5001 {
+		t.Errorf("main port = %d, want 5001", cfg.Processes["main"].Port)
 	}
 }
 
-func TestLoadProject_ModeB(t *testing.T) {
+func TestLoadProject_MultipleProcesses(t *testing.T) {
 	path := writeToml(t, `
 name = "md-viewer"
 autostart = true
@@ -81,26 +78,19 @@ memory_warn_mb = 512
 	}
 }
 
-func TestLoadProject_DefaultCommand(t *testing.T) {
-	path := writeToml(t, `
-name = "my-app"
-
-[ports]
-PORT = 8080
-`)
-	cfg, err := config.LoadProject(path)
-	if err != nil {
-		t.Fatalf("LoadProject error: %v", err)
-	}
-	if cfg.Command != "just dev" {
-		t.Errorf("Command = %q, want %q", cfg.Command, "just dev")
+func TestLoadProject_RequiresAtLeastOneProcess(t *testing.T) {
+	path := writeToml(t, `name = "my-app"`)
+	_, err := config.LoadProject(path)
+	if err == nil {
+		t.Error("expected error when no [processes.*] block is declared, got nil")
 	}
 }
 
 func TestLoadProject_MissingName(t *testing.T) {
 	path := writeToml(t, `
-[ports]
-PORT = 8080
+[processes.main]
+command = "echo hi"
+port = 8080
 `)
 	_, err := config.LoadProject(path)
 	if err == nil {
@@ -116,7 +106,11 @@ func TestLoadProject_NotFound(t *testing.T) {
 }
 
 func TestLoadProject_DefaultMaxRestarts(t *testing.T) {
-	path := writeToml(t, `name = "x"`)
+	path := writeToml(t, `
+name = "x"
+[processes.main]
+command = "echo hi"
+`)
 	cfg, err := config.LoadProject(path)
 	if err != nil {
 		t.Fatal(err)
@@ -127,37 +121,16 @@ func TestLoadProject_DefaultMaxRestarts(t *testing.T) {
 }
 
 func TestLoadProject_DefaultRestart(t *testing.T) {
-	path := writeToml(t, `name = "x"`)
+	path := writeToml(t, `
+name = "x"
+[processes.main]
+command = "echo hi"
+`)
 	cfg, err := config.LoadProject(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Restart != "on-failure" {
 		t.Errorf("Restart = %q, want on-failure", cfg.Restart)
-	}
-}
-
-func TestLoadProject_IsModeB(t *testing.T) {
-	path := writeToml(t, `
-name = "svc"
-[processes.a]
-command = "echo a"
-port = 3000
-`)
-	cfg, _ := config.LoadProject(path)
-	if !cfg.IsModeB() {
-		t.Error("expected IsModeB=true with processes defined")
-	}
-}
-
-func TestLoadProject_IsModeBFalseForModeA(t *testing.T) {
-	path := writeToml(t, `
-name = "svc"
-[ports]
-PORT = 8080
-`)
-	cfg, _ := config.LoadProject(path)
-	if cfg.IsModeB() {
-		t.Error("expected IsModeB=false for Mode A config")
 	}
 }

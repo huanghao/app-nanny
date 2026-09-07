@@ -154,7 +154,7 @@ func validLogBasenames(registered map[string]string) map[string]bool {
 	for name, dir := range registered {
 		var keys []string
 		cfg, err := config.LoadProject(filepath.Join(dir, "app-nanny.toml"))
-		if err == nil && cfg.IsModeB() {
+		if err == nil {
 			for proc := range cfg.Processes {
 				keys = append(keys, name+"/"+proc)
 			}

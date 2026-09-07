@@ -47,6 +47,7 @@ func TestManager_PSUsesInjectedPortDetector(t *testing.T) {
 
 	projDir := writeProjectToml(t, dir, `
 name = "webby"
+[processes.main]
 command = "sleep 60"
 `)
 	_ = m.Add("webby", projDir)
@@ -63,8 +64,8 @@ command = "sleep 60"
 		if len(info.ActualPorts) != 1 || info.ActualPorts[0] != 4567 {
 			t.Errorf("ActualPorts = %v, want [4567]", info.ActualPorts)
 		}
-		if info.Key != "webby" {
-			t.Errorf("Key = %q, want %q", info.Key, "webby")
+		if info.Key != "webby/main" {
+			t.Errorf("Key = %q, want %q", info.Key, "webby/main")
 		}
 	}
 	if !found {
@@ -77,12 +78,12 @@ command = "sleep 60"
 	}
 }
 
-// Regression: a Mode B project whose config declares several processes
-// (e.g. frontend + backend) used to lose the never-started ones from PS()
-// the moment any sibling was started — step 2 skipped the whole project
-// once one subprocess was tracked, so the web dashboard showed only the
+// Regression: a project whose config declares several processes (e.g.
+// frontend + backend) used to lose the never-started ones from PS() the
+// moment any sibling was started — step 2 skipped the whole project once
+// one subprocess was tracked, so the web dashboard showed only the
 // started server.
-func TestManager_PSModeBShowsUnstartedSiblings(t *testing.T) {
+func TestManager_PSShowsUnstartedSiblings(t *testing.T) {
 	m, dir := setupManager(t)
 	projDir := writeProjectToml(t, dir, `
 name = "duo"
@@ -120,6 +121,7 @@ func TestManager_AddAndStart(t *testing.T) {
 	m, dir := setupManager(t)
 	projDir := writeProjectToml(t, dir, `
 name = "sleeper"
+[processes.main]
 command = "sleep 60"
 `)
 	if err := m.Add("sleeper", projDir); err != nil {
@@ -150,17 +152,17 @@ func TestManager_PortConflict(t *testing.T) {
 
 	proj1Dir := writeProjectToml(t, dir, `
 name = "alpha"
+[processes.main]
 command = "sleep 60"
-[ports]
-PORT = 9090
+port = 9090
 `)
 	proj2Dir := filepath.Join(dir, "proj2")
 	os.MkdirAll(proj2Dir, 0755)
 	os.WriteFile(filepath.Join(proj2Dir, "app-nanny.toml"), []byte(`
 name = "beta"
+[processes.main]
 command = "sleep 60"
-[ports]
-PORT = 9090
+port = 9090
 `), 0644)
 
 	_ = m.Add("alpha", proj1Dir)
@@ -177,7 +179,11 @@ PORT = 9090
 
 func TestManager_Remove(t *testing.T) {
 	m, dir := setupManager(t)
-	projDir := writeProjectToml(t, dir, `name = "ephemeral"`)
+	projDir := writeProjectToml(t, dir, `
+name = "ephemeral"
+[processes.main]
+command = "sleep 60"
+`)
 	_ = m.Add("ephemeral", projDir)
 	if err := m.Remove("ephemeral"); err != nil {
 		t.Fatalf("Remove error: %v", err)
@@ -188,6 +194,7 @@ func TestManager_Restart(t *testing.T) {
 	m, dir := setupManager(t)
 	projDir := writeProjectToml(t, dir, `
 name = "rsvc"
+[processes.main]
 command = "sleep 60"
 `)
 	_ = m.Add("rsvc", projDir)
@@ -221,8 +228,11 @@ func TestManager_StartUnknown(t *testing.T) {
 
 func TestManager_RemoveWhileRunning(t *testing.T) {
 	m, dir := setupManager(t)
-	projDir := writeProjectToml(t, dir, `name = "blocker"
-command = "sleep 60"`)
+	projDir := writeProjectToml(t, dir, `
+name = "blocker"
+[processes.main]
+command = "sleep 60"
+`)
 	_ = m.Add("blocker", projDir)
 	_ = m.Start("blocker", "")
 	defer m.Stop("blocker", "")
@@ -239,8 +249,9 @@ func TestManager_CrashLoopGivesUpAtMaxRestarts(t *testing.T) {
 	m, dir := setupManager(t)
 	projDir := writeProjectToml(t, dir, `
 name = "crasher"
-command = "exit 1"
 max_restarts = 2
+[processes.main]
+command = "exit 1"
 `)
 	if err := m.Add("crasher", projDir); err != nil {
 		t.Fatalf("Add error: %v", err)

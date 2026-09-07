@@ -35,13 +35,14 @@ func TestGC_RemovesOrphanedLogsNotInRegistry(t *testing.T) {
 	m, regDir, logDir := setupGCManager(t)
 	projDir := writeProjectToml(t, regDir, `
 name = "kept"
+[processes.main]
 command = "sleep 60"
 `)
 	if err := m.Add("kept", projDir); err != nil {
 		t.Fatalf("Add error: %v", err)
 	}
 
-	writeFile(t, filepath.Join(logDir, "kept.log"), "still active")
+	writeFile(t, filepath.Join(logDir, "kept-main.log"), "still active")
 	writeFile(t, filepath.Join(logDir, "removed-project.log"), "orphaned")
 	writeFile(t, filepath.Join(logDir, "removed-project.log.1"), "orphaned backup")
 
@@ -52,8 +53,8 @@ command = "sleep 60"
 	if len(result.RemovedLogs) != 2 {
 		t.Fatalf("RemovedLogs = %v, want 2 entries", result.RemovedLogs)
 	}
-	if _, err := os.Stat(filepath.Join(logDir, "kept.log")); err != nil {
-		t.Errorf("kept.log should survive GC: %v", err)
+	if _, err := os.Stat(filepath.Join(logDir, "kept-main.log")); err != nil {
+		t.Errorf("kept-main.log should survive GC: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(logDir, "removed-project.log")); !os.IsNotExist(err) {
 		t.Errorf("removed-project.log should have been deleted")
@@ -63,7 +64,7 @@ command = "sleep 60"
 	}
 }
 
-func TestGC_ModeBKeepsEachDeclaredProcessLog(t *testing.T) {
+func TestGC_KeepsEachDeclaredProcessLog(t *testing.T) {
 	m, regDir, logDir := setupGCManager(t)
 	projDir := writeProjectToml(t, regDir, `
 name = "multi"
@@ -157,6 +158,7 @@ func TestGC_CapsOversizedFileInRegisteredProjectLogDir(t *testing.T) {
 	m, regDir, logDir := setupGCManager(t)
 	projDir := writeProjectToml(t, regDir, `
 name = "context-pad"
+[processes.main]
 command = "sleep 60"
 `)
 	if err := m.Add("context-pad", projDir); err != nil {

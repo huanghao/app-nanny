@@ -121,8 +121,6 @@ func (m *Manager) AdoptProcess(key string, entry RuntimeEntry) {
 				workDir = filepath.Join(projDir, pc.WorkingDir)
 			}
 		}
-	} else if cfg != nil {
-		procCfg = config.ProcessConfig{Command: cfg.Command}
 	}
 
 	proc := NewAdoptedProcess(key, procCfg, workDir, entry.PID, entry.PGID, entry.StartedAt)
@@ -145,8 +143,14 @@ func (m *Manager) logPath(key string) string {
 	return filepath.Join(m.logDir, sanitized+".log")
 }
 
-// LogPath returns the log file path for a key.
-// Returns "" for Mode B project names (multiple processes — no single file to tail).
+// LogPath returns the log file path for a key. key may be a full
+// "project/process" key, or a bare project name — which resolves to that
+// project's sole process's log if it only declares one (the common case:
+// most projects have exactly one process, and typing the process name
+// every time to look at its only log would be pure friction). A project
+// declaring more than one process returns "" for its bare name: which
+// process's log the caller wants is genuinely ambiguous, so the caller
+// must specify (see SubProcessKeys).
 func (m *Manager) LogPath(key string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -158,17 +162,19 @@ func (m *Manager) LogPath(key string) string {
 	if _, ok := m.processes[key]; ok {
 		return m.logPath(key)
 	}
-	// Mode B project name: check for subprocesses
-	prefix := key + "/"
-	for k := range m.processes {
-		if strings.HasPrefix(k, prefix) {
-			return "" // multiple sub-processes, no single path
+	// Bare project name: resolve to its sole declared process, if it only has one.
+	if cfg, ok := m.configs[key]; ok {
+		if len(cfg.Processes) > 1 {
+			return ""
+		}
+		for procName := range cfg.Processes {
+			return m.logPath(key + "/" + procName)
 		}
 	}
 	return m.logPath(key)
 }
 
-// SubProcessKeys returns sub-process keys for a Mode B project.
+// SubProcessKeys returns sub-process keys for a project.
 // Checks both active loggers AND adopted processes (no logger but known PID).
 func (m *Manager) SubProcessKeys(project string) []string {
 	m.mu.Lock()
@@ -195,7 +201,7 @@ func (m *Manager) SubProcessKeys(project string) []string {
 // LogLines returns the last n lines for a key.
 //   - Direct key with active logger → in-memory ring buffer (freshest data)
 //   - Direct key without logger (adopted) → read log file from disk
-//   - Mode B project name → aggregate from all subprocesses (logger or file)
+//   - Bare project name naming more than one process → aggregate from all subprocesses (logger or file)
 func (m *Manager) LogLines(key string, n int) []string {
 	m.mu.Lock()
 	logger, hasLogger := m.loggers[key]
@@ -206,7 +212,7 @@ func (m *Manager) LogLines(key string, n int) []string {
 		return logger.TailLines(n)
 	}
 
-	// 2. Check if this is a Mode B project name (no subprocess suffix)
+	// 2. Check if this is a project name with more than one declared process
 	prefix := key + "/"
 	m.mu.Lock()
 	type sub struct {
@@ -360,73 +366,13 @@ func (m *Manager) Start(projectName, processName string) error {
 	m.activeTomlTime[projectName] = loadedAt
 	m.mu.Unlock()
 
-	if cfg.IsModeB() {
-		return m.startModeB(projectName, processName, cfg, dir)
-	}
-	return m.startModeA(projectName, cfg, dir)
+	return m.startProcesses(projectName, processName, cfg, dir)
 }
 
-func (m *Manager) startModeA(name string, cfg *config.ProjectConfig, dir string) error {
-	m.mu.Lock()
-	// Idempotent: skip if already running
-	if existing, ok := m.processes[name]; ok && existing.Status() == StatusRunning {
-		m.mu.Unlock()
-		return nil
-	}
-	for envVar, port := range cfg.Ports {
-		if err := m.checkPortConflictLocked(name, envVar, port); err != nil {
-			m.mu.Unlock()
-			return err
-		}
-	}
-	m.mu.Unlock()
-
-	proc := NewProcess(name, config.ProcessConfig{Command: cfg.Command}, dir)
-	m.mu.Lock()
-	if old, ok := m.processes[name]; ok {
-		proc.SetRestarts(old.Restarts())
-	}
-	m.mu.Unlock()
-	if err := os.MkdirAll(m.logDir, 0755); err == nil {
-		logPath := m.logPath(name)
-		needSep := fileHasContent(logPath)
-		if rf, err := NewRotatingFile(logPath, 50*1024*1024, 3); err == nil {
-			lg := NewLogger(rf, m.errRing, name, cfg.ErrorPatterns)
-			if needSep {
-				lg.WriteSeparator(time.Now())
-			}
-			proc.SetStdio(lg)
-			m.mu.Lock()
-			m.loggers[name] = lg
-			m.mu.Unlock()
-		}
-	}
-	env := make(map[string]string)
-	for k, v := range cfg.Ports {
-		env[k] = fmt.Sprintf("%d", v)
-	}
-	if cfg.OtelService != "" {
-		env["OTEL_SERVICE_NAME"] = cfg.OtelService
-		env["OTEL_EXPORTER_OTLP_ENDPOINT"] = config.LocalOtelEndpoint
-		env["OTEL_EXPORTER_OTLP_PROTOCOL"] = config.LocalOtelProtocol
-	}
-	proc.SetEnv(env)
-	proc.SetOnCrash(func(key string) { m.onCrash(key, cfg) })
-
-	if err := proc.Start(); err != nil {
-		return err
-	}
-
-	m.mu.Lock()
-	m.processes[name] = proc
-	m.runtime.Set(name, RuntimeEntry{
-		PID: proc.PID(), PGID: proc.PGID(), StartedAt: proc.StartedAt(),
-	})
-	m.mu.Unlock()
-	return m.runtime.Save()
-}
-
-func (m *Manager) startModeB(projectName, processName string, cfg *config.ProjectConfig, dir string) error {
+// startProcesses starts every process the project declares, or just
+// processName if given (a project with one process and a project with ten
+// go through the exact same path here — no shorthand for the N=1 case).
+func (m *Manager) startProcesses(projectName, processName string, cfg *config.ProjectConfig, dir string) error {
 	for pName, pCfg := range cfg.Processes {
 		if processName != "" && pName != processName {
 			continue
@@ -582,8 +528,8 @@ func (m *Manager) PS() []ipc.Process {
 	}
 
 	// 2. Config-defined processes not yet tracked — show as stopped so
-	// they're visible. Mode B checks per-subprocess: starting only
-	// "proj/backend" must not hide the never-started "proj/frontend".
+	// they're visible. Checked per-process: starting only "proj/backend"
+	// must not hide the never-started "proj/frontend".
 	for name, projDir := range m.registry.List() {
 		cfg := m.configs[name]
 		if cfg == nil {
@@ -593,39 +539,21 @@ func (m *Manager) PS() []ipc.Process {
 			out = append(out, ipc.Process{Key: name, Project: name, Status: "stopped", WorkDir: projDir})
 			continue
 		}
-		if cfg.IsModeB() {
-			for pName, pCfg := range cfg.Processes {
-				if _, tracked := m.processes[name+"/"+pName]; tracked {
-					continue
-				}
-				wd := projDir
-				if pCfg.WorkingDir != "" {
-					wd = filepath.Join(projDir, pCfg.WorkingDir)
-				}
-				out = append(out, ipc.Process{
-					Key:          name + "/" + pName,
-					Project:      name,
-					Process:      pName,
-					Status:       "stopped",
-					DeclaredPort: pCfg.Port,
-					WorkDir:      wd,
-				})
-			}
-		} else {
-			if seen[name] {
+		for pName, pCfg := range cfg.Processes {
+			if _, tracked := m.processes[name+"/"+pName]; tracked {
 				continue
 			}
-			var firstPort int
-			for _, p := range cfg.Ports {
-				firstPort = p
-				break
+			wd := projDir
+			if pCfg.WorkingDir != "" {
+				wd = filepath.Join(projDir, pCfg.WorkingDir)
 			}
 			out = append(out, ipc.Process{
-				Key:          name,
+				Key:          name + "/" + pName,
 				Project:      name,
+				Process:      pName,
 				Status:       "stopped",
-				DeclaredPort: firstPort,
-				WorkDir:      projDir,
+				DeclaredPort: pCfg.Port,
+				WorkDir:      wd,
 			})
 		}
 	}
@@ -652,9 +580,10 @@ func (m *Manager) LoadAll() {
 	}
 }
 
-// checkPortConflictLocked must be called with m.mu held.
-// For Mode B processes (key = "project/process"), only that process's own port is checked.
-// For Mode A processes (key = "project"), all ports in [ports] are checked.
+// checkPortConflictLocked must be called with m.mu held. A running
+// process only conflicts on its own declared port — not on every port its
+// project happens to declare elsewhere (a sibling process's port is a
+// separate claim, checked separately when that sibling starts).
 func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) error {
 	if port == 0 {
 		return nil
@@ -664,36 +593,20 @@ func (m *Manager) checkPortConflictLocked(claimant, envVar string, port int) err
 			continue
 		}
 		parts := strings.SplitN(key, "/", 2)
-		if len(parts) == 2 {
-			// Mode B: running process only owns its own declared port
-			projectCfg := m.configs[parts[0]]
-			if projectCfg == nil {
-				continue
-			}
-			if procCfg, ok := projectCfg.Processes[parts[1]]; ok {
-				if procCfg.Port == port {
-					return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
-				}
-			}
-		} else {
-			// Mode A: running process owns all ports in [ports] table
-			cfg := m.projectConfigForKeyLocked(key)
-			if cfg == nil {
-				continue
-			}
-			for _, p := range cfg.DeclaredPorts() {
-				if p == port {
-					return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
-				}
+		if len(parts) != 2 {
+			continue
+		}
+		projectCfg := m.configs[parts[0]]
+		if projectCfg == nil {
+			continue
+		}
+		if procCfg, ok := projectCfg.Processes[parts[1]]; ok {
+			if procCfg.Port == port {
+				return fmt.Errorf("port %d (%s) conflicts with running service %q", port, envVar, key)
 			}
 		}
 	}
 	return nil
-}
-
-func (m *Manager) projectConfigForKeyLocked(key string) *config.ProjectConfig {
-	parts := strings.SplitN(key, "/", 2)
-	return m.configs[parts[0]]
 }
 
 // ProjectToml returns the current on-disk contents of a project's app-nanny.toml.
@@ -755,24 +668,18 @@ func (m *Manager) lastLogTimeStrLocked(key string) string {
 	return ""
 }
 
-// declaredPortForKey returns the configured port for a process key.
-// For Mode B ("project/process") returns that process's declared port.
-// For Mode A ("project") returns the first port in [ports], or 0 if none.
+// declaredPortForKey returns the configured port for a "project/process" key.
 func (m *Manager) declaredPortForKey(key string) int {
 	parts := strings.SplitN(key, "/", 2)
+	if len(parts) != 2 {
+		return 0
+	}
 	cfg := m.configs[parts[0]]
 	if cfg == nil {
 		return 0
 	}
-	if len(parts) == 2 {
-		if procCfg, ok := cfg.Processes[parts[1]]; ok {
-			return procCfg.Port
-		}
-		return 0
-	}
-	// Mode A: return first port value
-	for _, port := range cfg.Ports {
-		return port
+	if procCfg, ok := cfg.Processes[parts[1]]; ok {
+		return procCfg.Port
 	}
 	return 0
 }
@@ -783,14 +690,14 @@ func (m *Manager) declaredPortForKey(key string) int {
 // flowing (see otel/README.md for how to check that).
 func (m *Manager) otelServiceNameForKey(key string) string {
 	parts := strings.SplitN(key, "/", 2)
+	if len(parts) != 2 {
+		return ""
+	}
 	cfg := m.configs[parts[0]]
 	if cfg == nil {
 		return ""
 	}
-	if len(parts) == 2 {
-		return cfg.Processes[parts[1]].OtelService
-	}
-	return cfg.OtelService
+	return cfg.Processes[parts[1]].OtelService
 }
 
 func (m *Manager) onCrash(key string, cfg *config.ProjectConfig) {
