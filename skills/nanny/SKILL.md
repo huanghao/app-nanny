@@ -97,6 +97,8 @@ nanny 会自动捕获它直接拉起的进程（`command`/`[processes.*]` 里配
 
 **约定**：这类文件写到 `~/.local/share/app-nanny/logs/<project>/` 这个子目录下，文件名随意（`panel.log`、`switches.log` 都行，nanny 不关心具体名字），不用自己写任何大小判断/截断逻辑——落地位置选对了，剩下的轮转是 nanny 的事（见下一节「查看/清理日志」的 `nanny gc`），不用额外找 nanny 配置或注册。
 
+⚠️ `<project>` 必须和 registry 里的项目名**完全一致**（即 `app-nanny.toml` 里的 `name`，不确定就跑 `nanny ps` 看）。写错名字（比如项目叫 `context-pad` 却写到 `logs/contextpad/`），`nanny gc` 会把整个目录当孤儿**直接删掉**，连截断保留的机会都没有。
+
 ### 持久化数据往哪写（my-store 约定）
 
 日志之外，项目自己产出的、丢了会心疼的数据（对话记录、学习进度、annotation、素材库……）**不要**放在项目仓库自己的目录里，哪怕加了 `.gitignore`——这类目录一没留神就可能被 `git add -A` 带进版本控制，二是换机器 `git clone` 天然带不走，得额外记住去搬,过去好几个项目（kolab 的 `data/`/`logs/`、my-music-stdio 的素材库、md-viewer 的 annotation 数据库）都是各自发明了一套存放位置，事后才发现要单独处理。
@@ -136,7 +138,7 @@ nanny gc            # 清理孤儿日志（项目已 remove 但日志还在）+ 
 nanny gc --dry-run  # 只看会清理什么，不动手
 ```
 
-`gc` 管两类东西：nanny 自己捕获、但对应项目已经不在 `registry.json` 里的孤儿文件；以及上面「日志往哪写」约定里项目自己写到 `logs/<project>/` 下的文件——只要在这个约定路径下，不管是不是 nanny 自己写的都会被按 50MB 上限截断。目前是手动命令，没有接自动定期跑。
+`gc` 管两类东西：nanny 自己捕获、但对应项目已经不在 `registry.json` 里的孤儿文件；以及上面「日志往哪写」约定里项目自己写到 `logs/<project>/` 下的文件——只要在这个约定路径下，不管是不是 nanny 自己写的都会被按 50MB 上限截断。截断对齐到换行边界，且截断后文件开头会留一行 `nanny gc: trimmed ...` 标记——看到它说明历史被截过，不是那段时间没日志。目前是手动命令，没有接自动定期跑。
 
 ### Web 控制台
 
