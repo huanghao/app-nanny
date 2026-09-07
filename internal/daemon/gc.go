@@ -2,11 +2,13 @@
 package daemon
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/huanghao/app-nanny/internal/config"
 )
@@ -247,6 +249,11 @@ func dirSize(dir string) (int64, error) {
 // concurrent append could be overwritten, the same documented trade-off
 // `logrotate`'s copytruncate makes; acceptable here since these are
 // diagnostic logs, not data.
+//
+// Two courtesies on top of the bare cut: the tail is realigned to a line
+// boundary (the raw cut almost always lands mid-record, leaving a garbage
+// half-line at the top), and a marker line is written first so a gap in
+// the history is distinguishable from "nothing was logged".
 func truncateKeepTail(path string, keepBytes int64) error {
 	f, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
@@ -267,10 +274,20 @@ func truncateKeepTail(path string, keepBytes int64) error {
 	if _, err := f.ReadAt(tail, size-keepBytes); err != nil {
 		return err
 	}
+	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	// No newline at all (one giant record): keep the raw tail rather than
+	// drop everything.
 	if err := f.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := f.WriteAt(tail, 0); err != nil {
+	marker := fmt.Sprintf("%s nanny gc: trimmed %s to last %d bytes\n",
+		time.Now().UTC().Format(time.RFC3339), filepath.Base(path), keepBytes)
+	if _, err := f.WriteAt([]byte(marker), 0); err != nil {
+		return err
+	}
+	if _, err := f.WriteAt(tail, int64(len(marker))); err != nil {
 		return err
 	}
 	return nil

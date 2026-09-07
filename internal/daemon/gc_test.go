@@ -4,6 +4,7 @@ package daemon_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/huanghao/app-nanny/internal/config"
@@ -199,6 +200,47 @@ func writeOversizedFixture(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, append(head, append(padding, tail...)...), 0644); err != nil {
 		t.Fatalf("write oversized fixture %s: %v", path, err)
+	}
+}
+
+// TestGC_CappedLogStartsWithMarkerAndWholeLines covers truncateKeepTail's
+// two courtesies: the capped file opens with a "nanny gc: trimmed" marker
+// (so a history gap reads as a trim, not as silence), and the first
+// surviving record starts at a line boundary rather than mid-line.
+func TestGC_CappedLogStartsWithMarkerAndWholeLines(t *testing.T) {
+	m, _, logDir := setupGCManager(t)
+
+	daemonLogPath := filepath.Join(filepath.Dir(logDir), "daemon.log")
+	// Fixed-width records so any byte-offset cut lands predictably: after
+	// realignment the surviving content must be a whole number of records.
+	record := "0123456789abcdef\n"
+	var sb strings.Builder
+	for sb.Len() <= 51*1024*1024 {
+		sb.WriteString(record)
+	}
+	if err := os.WriteFile(daemonLogPath, []byte(sb.String()), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	if _, err := m.GC(false); err != nil {
+		t.Fatalf("GC error: %v", err)
+	}
+
+	data, err := os.ReadFile(daemonLogPath)
+	if err != nil {
+		t.Fatalf("read capped file: %v", err)
+	}
+	firstNewline := strings.IndexByte(string(data), '\n')
+	if firstNewline < 0 {
+		t.Fatalf("capped file has no marker line: %q...", data[:80])
+	}
+	marker := string(data[:firstNewline])
+	if !strings.Contains(marker, "nanny gc: trimmed") {
+		t.Errorf("first line should be the trim marker, got %q", marker)
+	}
+	rest := data[firstNewline+1:]
+	if len(rest)%len(record) != 0 {
+		t.Errorf("surviving content should be whole records only, got %d trailing bytes after marker (record=%d)", len(rest), len(record))
 	}
 }
 
