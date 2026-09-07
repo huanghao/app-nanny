@@ -39,8 +39,8 @@
     .chevron { display: inline-block; width: 14px; color: #858585; line-height: 1; }
     .project-title { display: flex; align-items: center; gap: 6px; min-width: 0; color: #f0f0f0; font-weight: 600; }
     .project-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .copy-cwd { color: #858585; }
-    .copy-cwd.copied { color: #4ec9b0; }
+    .copy-dir { color: #858585; }
+    .copy-dir.copied { color: #4ec9b0; }
     .health { color: #858585; }
     .health .running { color: #4ec9b0; }
     .health .stopped { color: #585858; }
@@ -431,6 +431,8 @@ function projectSummary(project) {
     cpu: 0,
     newestLog: '',
     workDir: '',
+    storeDir: '',
+    logsDir: '',
     uptime: '',
     uptimeSec: 0,
     hasActiveLog: false,
@@ -446,6 +448,8 @@ function projectSummary(project) {
     if (p.mem_mb > 0) summary.mem += p.mem_mb;
     if (p.cpu_percent > 0) summary.cpu += p.cpu_percent;
     if (p.work_dir && !summary.workDir) summary.workDir = p.work_dir;
+    if (p.store_dir && !summary.storeDir) summary.storeDir = p.store_dir;
+    if (p.logs_dir && !summary.logsDir) summary.logsDir = p.logs_dir;
     if (uptimeSeconds(p.uptime) > summary.uptimeSec) {
       summary.uptime = p.uptime;
       summary.uptimeSec = uptimeSeconds(p.uptime);
@@ -512,7 +516,9 @@ function projectHTML(project, expandedProjects) {
       <span class="chevron">${chevron}</span>
       <span class="name">${esc(project.name)}</span>
     </span></td>
-    <td>${summary.workDir ? `<button class="btn copy-cwd" data-path="${esc(summary.workDir)}" title="copy workspace path">cwd</button>` : ''}</td>
+    <td>${summary.workDir ? `<button class="btn copy-dir" data-path="${esc(summary.workDir)}" title="${esc(summary.workDir)}">cwd</button>` : ''}
+      ${summary.storeDir ? `<button class="btn copy-dir" data-path="${esc(summary.storeDir)}" title="${esc(summary.storeDir)}">store</button>` : ''}
+      ${summary.logsDir ? `<button class="btn copy-dir" data-path="${esc(summary.logsDir)}" title="${esc(summary.logsDir)}">logs</button>` : ''}</td>
     <td><span class="ports">${projectPortsHTML(project)}</span></td>
     <td><span class="health">${healthHTML(summary)}</span></td>
     <td>—</td>
@@ -585,7 +591,7 @@ function bindProjectEvents() {
     });
   });
 
-  document.querySelectorAll('.copy-cwd').forEach(btn => {
+  document.querySelectorAll('.copy-dir').forEach(btn => {
     btn.addEventListener('click', event => {
       event.stopPropagation();
       copyText(btn.dataset.path, btn);

@@ -61,35 +61,45 @@ type lsofPortDetector struct{}
 func (lsofPortDetector) ActualPorts(pid, pgid int) []int { return ActualPorts(pid, pgid) }
 
 type Manager struct {
-	mu        sync.Mutex
-	registry  *config.Registry
-	runtime   *Runtime
-	processes map[string]*Process
-	configs    map[string]*config.ProjectConfig
+	mu             sync.Mutex
+	registry       *config.Registry
+	runtime        *Runtime
+	processes      map[string]*Process
+	configs        map[string]*config.ProjectConfig
 	activeToml     map[string]string    // raw toml content used at last Start()
 	activeTomlTime map[string]time.Time // when that toml was loaded
-	logDir     string
-	loggers    map[string]*Logger
-	errRing    *ErrorRing
-	metrics    *Metrics
-	ports      PortDetector
+	logDir         string
+	storeRoot      string
+	loggers        map[string]*Logger
+	errRing        *ErrorRing
+	metrics        *Metrics
+	ports          PortDetector
 }
 
 func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
+	home, _ := os.UserHomeDir()
 	m := &Manager{
-		registry:   reg,
-		runtime:    rt,
-		processes:  make(map[string]*Process),
-		configs:    make(map[string]*config.ProjectConfig),
+		registry:       reg,
+		runtime:        rt,
+		processes:      make(map[string]*Process),
+		configs:        make(map[string]*config.ProjectConfig),
 		activeToml:     make(map[string]string),
 		activeTomlTime: make(map[string]time.Time),
-		logDir:     logDir,
-		loggers:    make(map[string]*Logger),
-		errRing:    NewErrorRing(),
-		metrics:    NewMetrics(),
-		ports:      lsofPortDetector{},
+		logDir:         logDir,
+		storeRoot:      filepath.Join(home, "workspace", "my-store"),
+		loggers:        make(map[string]*Logger),
+		errRing:        NewErrorRing(),
+		metrics:        NewMetrics(),
+		ports:          lsofPortDetector{},
 	}
 	return m
+}
+
+// SetStoreRoot overrides the convention root, mainly for tests.
+func (m *Manager) SetStoreRoot(root string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.storeRoot = root
 }
 
 // SetPortDetector overrides the default lsof-based port detection — mainly
@@ -475,7 +485,7 @@ func (m *Manager) Restart(projectName, processName string) error {
 // process. Must be called with m.mu held. Shared by PS() and
 // DetailedStatus() so the two response shapes can't drift from each other
 // the way the old ProcessInfo/ProcessStatus types did.
-func (m *Manager) processRecordLocked(key string, proc *Process) ipc.Process {
+func (m *Manager) processRecordLocked(key string, proc *Process, dirs map[string]projectDirs) ipc.Process {
 	parts := strings.SplitN(key, "/", 2)
 	project := parts[0]
 	process := ""
@@ -493,6 +503,7 @@ func (m *Manager) processRecordLocked(key string, proc *Process) ipc.Process {
 	if len(errs) > 0 {
 		lastErrTime = errs[0].Time.Format(time.RFC3339)
 	}
+	d := dirs[project]
 	return ipc.Process{
 		Key:           key,
 		Project:       project,
@@ -507,11 +518,40 @@ func (m *Manager) processRecordLocked(key string, proc *Process) ipc.Process {
 		MemMB:         snap.MemMB,
 		CPUPercent:    snap.CPUPercent,
 		WorkDir:       proc.WorkDir(),
+		StoreDir:      d.store,
+		LogsDir:       d.logs,
 		ErrorCount:    len(errs),
 		LastErrorTime: lastErrTime,
 		LastLogTime:   m.lastLogTimeStrLocked(key),
 		LogPath:       m.logPath(key),
 	}
+}
+
+type projectDirs struct {
+	store string
+	logs  string
+}
+
+func existingDir(path string) string {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return path
+	}
+	return ""
+}
+
+// projectDirsLocked detects convention directories once per project for one
+// status snapshot. It runs on each status request so the dashboard reflects
+// directories created or removed while it is open.
+func (m *Manager) projectDirsLocked(projectNames map[string]bool) map[string]projectDirs {
+	dirs := make(map[string]projectDirs, len(projectNames))
+	for project := range projectNames {
+		d := projectDirs{logs: existingDir(filepath.Join(m.logDir, project))}
+		if m.storeRoot != "" {
+			d.store = existingDir(filepath.Join(m.storeRoot, project+"-data"))
+		}
+		dirs[project] = d
+	}
+	return dirs
 }
 
 func (m *Manager) PS() []ipc.Process {
@@ -520,11 +560,19 @@ func (m *Manager) PS() []ipc.Process {
 
 	var out []ipc.Process
 	seen := make(map[string]bool) // projects already represented in out
+	projects := make(map[string]bool)
+	for name := range m.registry.List() {
+		projects[name] = true
+	}
+	for key := range m.processes {
+		projects[strings.SplitN(key, "/", 2)[0]] = true
+	}
+	dirs := m.projectDirsLocked(projects)
 
 	// 1. All tracked processes (running / stopped / crashed)
 	for key, proc := range m.processes {
 		seen[strings.SplitN(key, "/", 2)[0]] = true
-		out = append(out, m.processRecordLocked(key, proc))
+		out = append(out, m.processRecordLocked(key, proc, dirs))
 	}
 
 	// 2. Config-defined processes not yet tracked — show as stopped so
@@ -536,7 +584,7 @@ func (m *Manager) PS() []ipc.Process {
 			if seen[name] {
 				continue
 			}
-			out = append(out, ipc.Process{Key: name, Project: name, Status: "stopped", WorkDir: projDir})
+			out = append(out, ipc.Process{Key: name, Project: name, Status: "stopped", WorkDir: projDir, StoreDir: dirs[name].store, LogsDir: dirs[name].logs})
 			continue
 		}
 		for pName, pCfg := range cfg.Processes {
@@ -554,6 +602,8 @@ func (m *Manager) PS() []ipc.Process {
 				Status:       "stopped",
 				DeclaredPort: pCfg.Port,
 				WorkDir:      wd,
+				StoreDir:     dirs[name].store,
+				LogsDir:      dirs[name].logs,
 			})
 		}
 	}
@@ -765,11 +815,12 @@ func (m *Manager) DetailedStatus(projectName string) ipc.StatusResult {
 	defer m.mu.Unlock()
 
 	var out []ipc.Process
+	dirs := m.projectDirsLocked(map[string]bool{projectName: true})
 	for key, proc := range m.processes {
 		if strings.SplitN(key, "/", 2)[0] != projectName {
 			continue
 		}
-		out = append(out, m.processRecordLocked(key, proc))
+		out = append(out, m.processRecordLocked(key, proc, dirs))
 	}
 	return ipc.StatusResult{Processes: out}
 }

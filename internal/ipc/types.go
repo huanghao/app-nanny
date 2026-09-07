@@ -77,6 +77,8 @@ type Process struct {
 	MemMB         float64 `json:"mem_mb"`
 	CPUPercent    float64 `json:"cpu_percent"`
 	WorkDir       string  `json:"work_dir"`
+	StoreDir      string  `json:"store_dir,omitempty"`
+	LogsDir       string  `json:"logs_dir,omitempty"`
 	ErrorCount    int     `json:"error_count"`
 	LastErrorTime string  `json:"last_error_time"` // RFC3339, empty if no errors
 	LastLogTime   string  `json:"last_log_time"`   // RFC3339, time of last log line
@@ -102,7 +104,7 @@ type LogsParams struct {
 
 type LogsResult struct {
 	Lines   []string `json:"lines"`
-	Path    string   `json:"path"`    // log file path for -f mode; empty = can't follow (multi-process)
+	Path    string   `json:"path"`     // log file path for -f mode; empty = can't follow (multi-process)
 	SubKeys []string `json:"sub_keys"` // populated when Path is empty: the per-process keys to use
 }
 

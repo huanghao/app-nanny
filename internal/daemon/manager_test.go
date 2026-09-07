@@ -16,7 +16,7 @@ func setupManager(t *testing.T) (*daemon.Manager, string) {
 	dir := t.TempDir()
 	rt := daemon.NewRuntime(filepath.Join(dir, "runtime.json"))
 	reg := config.NewRegistry(filepath.Join(dir, "registry.json"))
-	m := daemon.NewManager(reg, rt, t.TempDir())
+	m := daemon.NewManager(reg, rt, filepath.Join(dir, "logs"))
 	return m, dir
 }
 
@@ -75,6 +75,48 @@ command = "sleep 60"
 	status := m.DetailedStatus("webby")
 	if len(status.Processes) != 1 || len(status.Processes[0].ActualPorts) != 1 || status.Processes[0].ActualPorts[0] != 4567 {
 		t.Errorf("DetailedStatus ActualPorts = %+v, want [4567]", status.Processes)
+	}
+}
+
+func TestManager_PSDetectsConventionDirectories(t *testing.T) {
+	m, dir := setupManager(t)
+	storeRoot := filepath.Join(dir, "my-store")
+	m.SetStoreRoot(storeRoot)
+	logRoot := filepath.Join(dir, "logs")
+	// The logs directory is the project-owned convention directory, not
+	// nanny's per-process log file (which lives directly under logRoot).
+	if err := os.MkdirAll(filepath.Join(storeRoot, "webby-data"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(logRoot, "webby"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	projDir := writeProjectToml(t, dir, `
+name = "webby"
+[processes.main]
+command = "sleep 60"
+`)
+	if err := m.Add("webby", projDir); err != nil {
+		t.Fatal(err)
+	}
+
+	infos := m.PS()
+	if len(infos) != 1 {
+		t.Fatalf("PS() returned %d processes, want 1", len(infos))
+	}
+	if infos[0].StoreDir != filepath.Join(storeRoot, "webby-data") {
+		t.Errorf("StoreDir = %q", infos[0].StoreDir)
+	}
+	if infos[0].LogsDir != filepath.Join(logRoot, "webby") {
+		t.Errorf("LogsDir = %q", infos[0].LogsDir)
+	}
+
+	if err := os.RemoveAll(filepath.Join(logRoot, "webby")); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.PS()[0].LogsDir; got != "" {
+		t.Errorf("LogsDir after directory removal = %q, want empty", got)
 	}
 }
 
