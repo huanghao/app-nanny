@@ -1,11 +1,16 @@
 name         = "otel"
-command      = "./run.sh"
 restart      = "on-failure"
 max_restarts = 3
 autostart    = false
 
-[ports]
-GRAFANA_PORT     = 3080
-TEMPO_HTTP_PORT  = 3200
-OTLP_GRPC_PORT   = 4317
-OTLP_HTTP_PORT   = 4318
+# 4 个端口都是 run.sh 里 `docker run -p` 直接写死的（3080 Grafana UI /
+# 3200 Tempo / 4317 OTLP gRPC / 4318 OTLP HTTP），从来不是靠环境变量注入
+# 传进去的——之前旧格式的 [ports] 表能声明多个纯粹是巧合用上了它的多
+# key 能力，不代表 run.sh 真的读了这些环境变量。统一成单进程格式后，
+# `port` 字段只能留一个给 nanny 做冲突检测/展示，选 3080（用户会打开的
+# 那个）；另外三个端口 nanny 就不知道了，不会出现在 nanny ps 里、也不
+# 参与端口冲突检查——otel 本身端口固定、很少跟别的项目撞，这个损失可以
+# 接受。
+[processes.main]
+command = "./run.sh"
+port    = 3080
