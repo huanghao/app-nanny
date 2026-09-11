@@ -53,22 +53,24 @@ nanny dashboard
 
 在**项目根目录**放 `app-nanny.toml`，描述如何启动这个项目。
 
-### Mode A：单命令（最简单）
+不管项目只有一个进程还是好几个，都用同一种写法——`[processes.<name>]`，至少声明一个。
 
-适合只有一个进程的项目（纯后端、单页应用等）：
+### 单进程
+
+单进程项目按惯例把它叫 `main`：
 
 ```toml
 name    = "my-server"
-command = ".venv/bin/uvicorn main:app --reload --port ${PORT:-8000}"
 restart = "on-failure"
 
-[ports]
-PORT = 8000          # 注入为环境变量，命令里用 ${PORT} 读取
+[processes.main]
+command = ".venv/bin/uvicorn main:app --reload --port ${PORT:-8000}"
+port    = 8000       # 注入为环境变量 PORT，命令里用 ${PORT} 读取
 ```
 
-nanny 启动时执行 `PORT=8000 .venv/bin/uvicorn main:app ...`，并在 `ps` 输出里展示端口。
+nanny 启动时执行 `PORT=8000 .venv/bin/uvicorn main:app ...`，并在 `ps` 输出里展示端口。声明了唯一一个进程时，`nanny start my-server`/`nanny logs my-server` 这类不带进程名的命令会自动落到这一个进程上。
 
-### Mode B：多进程（前后端分离）
+### 多进程（前后端分离）
 
 适合同一项目需要同时启动多个进程：
 
@@ -86,25 +88,22 @@ working_dir = "frontend"   # 相对项目根目录，此进程在 frontend/ 子�
 port        = 3011
 ```
 
-每个 `[processes.<name>]` 是一个独立进程，有自己的日志、端口、状态。
+每个 `[processes.<name>]` 是一个独立进程，有自己的日志、端口、状态，可以单独重启（`nanny restart my-app/backend`）。
 
 ### 所有配置项
 
 | 字段 | 位置 | 说明 | 默认值 |
 |---|---|---|---|
 | `name` | 顶层 | 项目名，唯一标识，用于所有命令 | 必填 |
-| `command` | 顶层 (Mode A) | 启动命令，在项目根目录执行 | `"just dev"` |
 | `restart` | 顶层 | 崩溃后重启策略：`"on-failure"` / `"always"` / `"never"` | `"on-failure"` |
 | `max_restarts` | 顶层 | 最多重启次数，防止无限循环 | `5` |
 | `autostart` | 顶层 | daemon 启动时自动拉起此服务 | `false` |
-| `otel_service_name` | 顶层 (Mode A) | 接入本地 otel（见 `otel/README.md`），自动注入 `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_PROTOCOL` | — |
-| `[ports]` | Mode A | 环境变量名 → 端口号，启动时注入 | — |
-| `[processes.<name>]` | Mode B | 独立进程定义 | — |
-| `command` | Mode B 进程 | 该进程的启动命令 | 必填 |
-| `port` | Mode B 进程 | 声明端口，冲突检测 + 注入为 `PORT=<port>` | — |
-| `working_dir` | Mode B 进程 | 相对项目根目录的工作目录 | 项目根目录 |
-| `memory_warn_mb` | Mode B 进程 | 内存超限告警阈值（MB） | — |
-| `otel_service_name` | Mode B 进程 | 同上，每个 process 独立声明 | — |
+| `[processes.<name>]` | 至少一个 | 独立进程定义 | — |
+| `command` | 进程 | 该进程的启动命令 | 必填 |
+| `port` | 进程 | 声明端口，冲突检测 + 注入为 `PORT=<port>` | — |
+| `working_dir` | 进程 | 相对项目根目录的工作目录 | 项目根目录 |
+| `memory_warn_mb` | 进程 | 内存超限告警阈值（MB） | — |
+| `otel_service_name` | 进程 | 接入本地 otel（见 `otel/README.md`），自动注入 `OTEL_SERVICE_NAME`/`OTEL_EXPORTER_OTLP_ENDPOINT`/`OTEL_EXPORTER_OTLP_PROTOCOL` | — |
 
 ### 自定义错误检测规则
 

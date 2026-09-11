@@ -77,7 +77,12 @@ type Manager struct {
 }
 
 func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
-	home, _ := os.UserHomeDir()
+	var storeRoot string
+	if home, err := os.UserHomeDir(); err != nil {
+		log.Printf("nanny: could not determine home directory (%v); store-dir detection in `nanny ps` disabled", err)
+	} else {
+		storeRoot = filepath.Join(home, "workspace", "my-store")
+	}
 	m := &Manager{
 		registry:       reg,
 		runtime:        rt,
@@ -86,7 +91,7 @@ func NewManager(reg *config.Registry, rt *Runtime, logDir string) *Manager {
 		activeToml:     make(map[string]string),
 		activeTomlTime: make(map[string]time.Time),
 		logDir:         logDir,
-		storeRoot:      filepath.Join(home, "workspace", "my-store"),
+		storeRoot:      storeRoot,
 		loggers:        make(map[string]*Logger),
 		errRing:        NewErrorRing(),
 		metrics:        NewMetrics(),
