@@ -50,7 +50,7 @@ nanny status otel
 
 ### 项目本身被 nanny 管理（推荐）
 
-在项目的 `app-nanny.toml` 里，对应的顶层配置（Mode A）或 `[processes.<name>]`（Mode B）加一行 `otel_service_name`：
+在项目的 `app-nanny.toml` 里，对应的 `[processes.<name>]` 加一行 `otel_service_name`：
 
 ```toml
 [processes.ts]
@@ -141,7 +141,7 @@ Prometheus/Pyroscope 用的是启动参数（`*_EXTRA_ARGS`），Loki 用的是�
 
 **为什么是 14 天，不是更短**：这套栈是个人本地用，不是所有项目都天天高频跑，某段时间用得多、某段时间几乎不碰是常态——保留窗口太短容易把还想看的数据提前冲掉。用实测数据算过：`lgtm-data` volume 建于 2026-08-27，在还没加任何 retention 限制的 5.9 天里，Prometheus 涨了 137MB（23.2MB/天）、Tempo 涨了 80MB（13.6MB/天，当时只有 kolab-py/ts 两个服务在推），Loki 232KB（当时 0 个服务接 log，可忽略）；Grafana 的 155MB 和 Pyroscope 的 140MB 基本是固定开销，不随天数涨（Pyroscope 那 140MB 全是 metastore/shared 的空跑状态，没有任何服务在推 profile 数据）。按这个速率推算，14 天稳态预估约 **0.8GB**，远低于 2GB；就算以后多接几个服务、增长速率涨到现在的 3-4 倍，Prometheus 有独立的 2GB 硬上限兜底，Tempo/Loki 也还有相当裕量，不会突然把本地拖垮。
 
-**踩过的坑**：第一版想把 Tempo 也按同样思路加 `compactor: compaction: block_retention: 168h` 到配置文件，结果容器起不来，日志是 `Error: Tempo exited before becoming ready`，nanny 因为 `restart = on-failure` 一直重试到 `max_restarts` 才停下（`nanny status otel` 会显示 `crashed`）。单独拉起 Tempo 二进制排查才看到根因：`failed parsing config: ... field compactor not found in type app.Config`——这个镜像版本的 Tempo（3.0.3）配置结构已经变了，不能照抄旧文档里的写法。教训：**改这类 all-in-one 镜像的组件配置前，先用 `docker run --rm --entrypoint <bin> <image> -config.file=... -verify-config`（Loki 支持）或单独起一下这个组件（Tempo 不支持 `-verify-config`，只能真跑一次看报错）单独验证，不要直接改完就让 nanny 拉起整个栈去踩** ——整栈是一个 Mode A 进程，任何一个组件配置错都会让 `run-all.sh` 整体退出，殃及其它已经工作正常的组件。
+**踩过的坑**：第一版想把 Tempo 也按同样思路加 `compactor: compaction: block_retention: 168h` 到配置文件，结果容器起不来，日志是 `Error: Tempo exited before becoming ready`，nanny 因为 `restart = on-failure` 一直重试到 `max_restarts` 才停下（`nanny status otel` 会显示 `crashed`）。单独拉起 Tempo 二进制排查才看到根因：`failed parsing config: ... field compactor not found in type app.Config`——这个镜像版本的 Tempo（3.0.3）配置结构已经变了，不能照抄旧文档里的写法。教训：**改这类 all-in-one 镜像的组件配置前，先用 `docker run --rm --entrypoint <bin> <image> -config.file=... -verify-config`（Loki 支持）或单独起一下这个组件（Tempo 不支持 `-verify-config`，只能真跑一次看报错）单独验证，不要直接改完就让 nanny 拉起整个栈去踩** ——整栈是同一个进程，任何一个组件配置错都会让 `run-all.sh` 整体退出，殃及其它已经工作正常的组件。
 
 **手动检查磁盘占用**（无论有没有触发 retention，想确认现状随时可以看）：
 
