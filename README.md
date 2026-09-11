@@ -139,6 +139,7 @@ nanny errors <name> [--last] [--copy]        # 查看错误事件
 # Daemon
 nanny daemon start/stop/status   # 管理后台 daemon
 nanny install / uninstall        # launchd 自动启动（macOS）
+nanny gc [--dry-run]             # 清理孤儿日志 + 截断超限日志（见「日志文件」）
 
 # Web 控制台
 nanny dashboard              # 打开 http://localhost:7070
