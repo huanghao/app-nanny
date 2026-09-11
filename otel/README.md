@@ -8,7 +8,7 @@
 
 ## nanny 怎么管它
 
-跟其他 nanny 项目一样，一个 `app-nanny.toml` + Mode A 单命令：
+跟其他 nanny 项目一样，一个 `app-nanny.toml` + 单进程（`[processes.main]`）：
 
 ```bash
 cd otel
@@ -22,6 +22,16 @@ nanny status otel
 `run.sh` 里做了判断：容器 `lgtm` 不存在则 `docker run` 创建，存在则 `docker start -a` 启动已有容器（保留 `lgtm-data` volume 里的历史数据，不会每次重建）。停止时不依赖 docker CLI 转发信号给容器（macOS/Docker Desktop 下这个转发不可靠，实测会出现 nanny 认为已停但容器其实还在跑的状态漂移）——`run.sh` 自己 trap SIGTERM，收到后显式跑 `docker stop`，等容器真正退出再让脚本退出。
 
 不设 `autostart`——默认不随 daemon 自动拉起，用的时候自己 `nanny start otel`。
+
+## 换新机器重建
+
+没有 Dockerfile/compose 文件——`run.sh` 直接 `docker run` 现成镜像 `grafana/otel-lgtm`，这个目录（`app-nanny.toml` + `run.sh` + `config/loki-config.yaml` + 本文档）已经是重建所需的全部上下文，都在 git 里，clone 仓库即可拿到。步骤：
+
+1. 新机器装好 Docker 和 nanny（daemon）。
+2. `cd otel && nanny add . && nanny start otel`——首次启动 `run.sh` 会自动 `docker pull` + `docker run`，创建新容器和全新的 `lgtm-data` volume，`config/loki-config.yaml` 也会自动 bind-mount，不用手动建任何东西。
+3. 完事，不需要迁移旧机器的 `lgtm-data`（本地 trace/log/metric 历史，见上面"仅本地用"——重建即空库，符合预期）。
+
+**唯一要注意的**：`run.sh` 里 `IMAGE=grafana/otel-lgtm` 没锁版本号，等价 `:latest`——新机器第一次 `docker pull` 拉到的可能是跟当前这台不同的版本。这是已知取舍（见仓库根 `.claude/CODE_HEALTH.md` 的记录），保持现状不锁定；如果新机器上启动失败或界面/数据异常，先怀疑是不是镜像版本变了导致 config schema 对不上（`config/loki-config.yaml` 头部注释里记录着当前对应的版本号，可以拿来对比排查）。
 
 ## 入口
 
