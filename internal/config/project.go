@@ -10,10 +10,9 @@ import (
 // ProjectConfig is the parsed content of an app-nanny.toml file. Every
 // project declares at least one [processes.<name>] block — a
 // single-process project just declares one (conventionally named "main"),
-// there is no separate flat-field shorthand for that case. (There used to
-// be one — "Mode A" — see git history around the "unify to one mode"
-// refactor; it doubled every code path that touches a process's config,
-// for an ergonomics win only the project's own toml author ever saw.)
+// there is no separate flat-field shorthand for that case: supporting one
+// would double every code path that touches a process's config, for an
+// ergonomics win only the project's own toml author would ever notice.
 type ProjectConfig struct {
 	Name          string                   `toml:"name"`
 	AutoStart     bool                     `toml:"autostart"`
