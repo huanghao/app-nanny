@@ -51,6 +51,11 @@
     .crashed { color: #f48771; }
     .btn { background: #3c3c3c; border: none; color: #d4d4d4; padding: 3px 10px; cursor: pointer; border-radius: 3px; font-family: var(--font-ui); font-size: 12px; margin: 0 2px; }
     .btn:hover { background: #505050; }
+    .btn:active { background: #2a2a2a; }
+    .btn:disabled { opacity: .35; cursor: not-allowed; background: #3c3c3c; }
+    .btn.btn-err { background: #c0392b; color: #fff; }
+    @keyframes btn-spin { to { transform: rotate(360deg); } }
+    .btn.spinning { display: inline-block; animation: btn-spin .6s linear infinite; }
     a.port-link { color: #4ec9b0; text-decoration: none; }
     a.port-link:hover { text-decoration: underline; color: #7de8d0; }
     .port-dim { color: #484848; }
@@ -323,11 +328,20 @@ function uptimeSeconds(uptime) {
   return total;
 }
 
+// Keys with an action (start/stop/restart) currently in flight. While a key
+// is busy its buttons render disabled and the clicked one spins — this is
+// what stops a second click from firing a second restart before the first
+// one has even reached the daemon.
+const busyKeys = new Map(); // key -> action in flight ('start'|'stop'|'restart')
+
 function actionsHTML(key) {
   const project = key.split('/')[0];
-  return `<button class="btn service-action" data-key="${esc(key)}" data-action="start" title="start">&#9654;</button>`
-       + `<button class="btn service-action" data-key="${esc(key)}" data-action="stop" title="stop">&#9632;</button>`
-       + `<button class="btn service-action" data-key="${esc(key)}" data-action="restart" title="restart">&#8634;</button>`
+  const pending = busyKeys.has(key);
+  const dis = pending ? 'disabled' : '';
+  const spin = act => busyKeys.get(key) === act ? ' spinning' : '';
+  return `<button class="btn service-action${spin('start')}" data-key="${esc(key)}" data-action="start" title="start" ${dis}>&#9654;</button>`
+       + `<button class="btn service-action${spin('stop')}" data-key="${esc(key)}" data-action="stop" title="stop" ${dis}>&#9632;</button>`
+       + `<button class="btn service-action${spin('restart')}" data-key="${esc(key)}" data-action="restart" title="restart" ${dis}>&#8634;</button>`
        + `<button class="btn config-action" data-project="${esc(project)}" title="view app-nanny.toml">&#9881;</button>`;
 }
 
@@ -645,12 +659,41 @@ function ackErr(key) {
 }
 
 async function doAction(key, act) {
+  // A previous action on this key is still in flight — ignore the click
+  // instead of firing a second one (a double-click here would mean two
+  // restarts racing the same process).
+  if (busyKeys.has(key)) return;
+
+  busyKeys.set(key, act);
+  renderProjects(latestProcesses); // instant: buttons disable, clicked one spins
+
   const parts = key.split('/');
   const url = parts.length === 2
     ? `/api/v1/${parts[0]}/${parts[1]}/${act}`
     : `/api/v1/${key}/${act}`;
-  await fetch(url, { method: 'POST' });
-  setTimeout(loadPS, 400);
+
+  let ok = false;
+  try {
+    const res = await fetch(url, { method: 'POST' });
+    ok = res.ok;
+  } catch {
+    ok = false;
+  }
+
+  busyKeys.delete(key);
+  await loadPS(); // reflect real post-action state as soon as the daemon confirms it, not a guessed delay
+
+  if (!ok) flashActionError(key, act);
+}
+
+// Briefly flags the button as failed so a rejected/errored action isn't
+// silently indistinguishable from a successful one.
+function flashActionError(key, act) {
+  const row = document.querySelector(`tr[data-key="${CSS.escape(key)}"]`);
+  const btn = row && row.querySelector(`.service-action[data-action="${act}"]`);
+  if (!btn) return;
+  btn.classList.add('btn-err');
+  setTimeout(() => btn.classList.remove('btn-err'), 1500);
 }
 
 function streamLogs(key) {

@@ -40,6 +40,14 @@ func SSELogsHandler(mgr ManagerIface, key string, w http.ResponseWriter, r *http
 			return
 		case <-ticker.C:
 			lines := mgr.LogLines(key, 500)
+			if len(lines) < sent {
+				// The buffer got shorter than what we've already sent — the
+				// process behind this key was restarted, which swaps in a
+				// fresh (empty) ring buffer. Resync from scratch instead of
+				// waiting for it to grow past the old count, which would
+				// otherwise freeze this stream until it did.
+				sent = 0
+			}
 			if len(lines) > sent {
 				for _, line := range lines[sent:] {
 					escaped := strings.ReplaceAll(line, "\n", " ")
